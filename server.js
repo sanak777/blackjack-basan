@@ -1,22 +1,25 @@
-
 const express=require('express');
 const http=require('http');
 const {Server}=require('socket.io');
-const path=require('path');
 
 const app=express();
 const server=http.createServer(app);
 const io=new Server(server,{pingInterval:12000,pingTimeout:25000});
 const PORT=process.env.PORT||3000;
 const START=1000000;
+const MIN_BET=10000;
+const BET_SECONDS=10;
 
 app.use(express.static(__dirname));
-app.get('/health',(req,res)=>res.json({ok:true}));
+app.get('/health',(req,res)=>res.json({ok:true,version:'V17'}));
 
 const G={
- players:Array(10).fill(null), gameStarted:false, dealing:false, settling:false,
- roundNo:1, dealerHand:[], deck:[], turnOrder:[], turnIndex:0, activeHandIndex:0,
- status:'사람모양만 눌러 착석하세요 · 0 / 10', countdown:null, hideHole:false
+ players:Array(10).fill(null),
+ gameStarted:false,dealing:false,settling:false,
+ tournamentStarted:false,tournamentOver:false,winnerName:'',
+ roundNo:1,dealerHand:[],deck:[],turnOrder:[],turnIndex:0,activeHandIndex:0,
+ status:'10명 모이면 시작합니다 · 0 / 10',
+ countdown:null,betTimer:null,hideHole:false
 };
 
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
@@ -27,8 +30,14 @@ function makeDeck(){
  return d;
 }
 function handValue(cards){
- let t=0,a=0; for(const c of cards){if(c.r==='A'){t+=11;a++}else if(['K','Q','J'].includes(c.r))t+=10;else t+=Number(c.r)}
- while(t>21&&a){t-=10;a--} return t;
+ let t=0,a=0;
+ for(const c of cards||[]){
+   if(c.r==='A'){t+=11;a++}
+   else if(['K','Q','J'].includes(c.r))t+=10;
+   else t+=Number(c.r)
+ }
+ while(t>21&&a){t-=10;a--}
+ return t;
 }
 function rankNumber(r){return r==='A'?14:r==='K'?13:r==='Q'?12:r==='J'?11:Number(r)}
 function pairOdds(cards){
@@ -52,6 +61,14 @@ function canSplit(p,h){
 }
 function canDouble(p,h){return !!(p&&h&&h.cards.length===2&&!h.doubled&&p.bank>=h.bet)}
 function byToken(token){return G.players.findIndex(p=>p&&p.token===token)}
+function aliveEntries(){return G.players.map((p,i)=>p?{p,i}:null).filter(Boolean)}
+function alivePlayers(){return G.players.filter(Boolean)}
+function clearCountdown(){
+ if(G.countdown){clearInterval(G.countdown);G.countdown=null}
+}
+function stopBetTimer(){
+ if(G.betTimer){clearInterval(G.betTimer);G.betTimer=null}
+}
 function clearStaleWaitingSeats(){
  if(G.gameStarted)return false;
  const now=Date.now();let changed=false;
@@ -60,13 +77,16 @@ function clearStaleWaitingSeats(){
    if(!p||p.connected!==false||!p.disconnectedAt)continue;
    const grace=p.confirmed?30000:15000;
    if(now-p.disconnectedAt>=grace){
-     G.players[i]=null;
-     changed=true;
+     G.players[i]=null;changed=true;
    }
  }
  return changed;
 }
-function publicPlayer(p){if(!p)return null; const {token,socketId,...q}=p; return q}
+function publicPlayer(p){
+ if(!p)return null;
+ const {token,socketId,...q}=p;
+ return q;
+}
 function snapshotFor(socket){
  const mySeat=byToken(socket.data.token);
  let turnSeat=G.turnIndex<G.turnOrder.length?G.turnOrder[G.turnIndex]:null;
@@ -75,53 +95,194 @@ function snapshotFor(socket){
    players:G.players.map(publicPlayer),
    dealerHand:G.dealerHand.map((c,i)=>i===1&&G.hideHole?{hidden:true}:c),
    hideHole:G.hideHole,gameStarted:G.gameStarted,dealing:G.dealing,settling:G.settling,
+   tournamentStarted:G.tournamentStarted,tournamentOver:G.tournamentOver,winnerName:G.winnerName,
    roundNo:G.roundNo,status:G.status,turnSeat,activeHandIndex:G.activeHandIndex,
-   canSplit:turnSeat===mySeat&&canSplit(p,h),canDouble:turnSeat===mySeat&&canDouble(p,h),mySeat
+   canSplit:turnSeat===mySeat&&canSplit(p,h),canDouble:turnSeat===mySeat&&canDouble(p,h),
+   mySeat,serverNow:Date.now(),betSeconds:BET_SECONDS
  };
 }
 function broadcast(){
- for(const s of io.sockets.sockets.values()) s.emit('state',snapshotFor(s));
+ for(const s of io.sockets.sockets.values())s.emit('state',snapshotFor(s));
+}
+function remainingBetSeconds(){
+ const pending=alivePlayers().filter(p=>!p.confirmed&&p.betDeadline);
+ if(!pending.length)return 0;
+ return Math.max(0,Math.ceil(Math.max(...pending.map(p=>p.betDeadline))-Date.now())/1000);
 }
 function updateWaitingStatus(){
- const count=G.players.filter(Boolean).length,done=G.players.filter(p=>p&&p.confirmed).length;
- if(!G.gameStarted) G.status=count<10?`사람모양만 눌러 착석하세요 · ${count} / 10`:`10명 착석 완료 · 베팅 완료 ${done} / 10`;
-}
-function maybeStart(){
- const seated=G.players.filter(Boolean);
- if(!G.gameStarted&&seated.length===10&&seated.every(p=>p.confirmed)&&!G.countdown){
-   let n=5; G.status=`전원 베팅 완료 · ${n}초 후 패 배분`; broadcast();
-   G.countdown=setInterval(()=>{
-     n--; G.status=`전원 베팅 완료 · ${n}초 후 패 배분`; broadcast();
-     if(n<=0){clearInterval(G.countdown);G.countdown=null;startRound()}
-   },1000);
+ if(G.tournamentOver){
+   G.status=`🏆 ${G.winnerName} 최종 우승 · TOURNAMENT COMPLETE`;
+   return;
+ }
+ if(G.gameStarted)return;
+ const alive=alivePlayers();
+ const done=alive.filter(p=>p.confirmed).length;
+ const remain=remainingBetSeconds();
+ if(!G.tournamentStarted){
+   if(alive.length<10)G.status=`10명 모이면 시작합니다 · ${alive.length} / 10`;
+   else G.status=`10명 모였습니다 · 베팅 완료 ${done} / 10${remain?` · ${remain}초`:''}`;
+ }else{
+   G.status=`생존 ${alive.length}명 · 베팅 완료 ${done} / ${alive.length}${remain?` · ${remain}초`:''}`;
  }
 }
+function finishTournament(entry){
+ stopBetTimer();clearCountdown();
+ G.gameStarted=false;G.dealing=false;G.settling=false;G.tournamentOver=true;G.tournamentStarted=true;
+ G.winnerName=entry?.p?.name||'WINNER';
+ for(let i=0;i<G.players.length;i++){
+   if(!G.players[i])continue;
+   if(i!==entry?.i)G.players[i]=null;
+   else{
+     G.players[i].confirmed=true;
+     G.players[i].betDeadline=null;
+     G.players[i].lastAction='CHAMPION';
+     G.players[i].roundResult='🏆 FINAL WINNER';
+   }
+ }
+ updateWaitingStatus();broadcast();
+}
+function checkFinalWinner(){
+ const alive=aliveEntries();
+ if(G.tournamentStarted&&alive.length===1){finishTournament(alive[0]);return true}
+ return false;
+}
+function confirmPlayerBet(p,auto=false){
+ if(!p||p.confirmed)return false;
+ let total=p.bet.main+p.bet.pair+p.bet.trio;
+ if(total<=0){
+   if(p.bank<MIN_BET)return false;
+   p.bet.main=MIN_BET;p.betLast.main=MIN_BET;p.history.push({mode:'main',v:MIN_BET});total=MIN_BET;
+ }
+ if(total>p.bank)return false;
+ p.bank-=total;p.confirmed=true;p.autoConfirmed=!!auto;p.betDeadline=null;
+ p.betState=auto?'AUTO_CONFIRMED':'CONFIRMED';
+ return true;
+}
+function armBettingClock(){
+ if(G.tournamentOver||G.gameStarted)return;
+ const alive=alivePlayers();
+ if(!G.tournamentStarted&&alive.length<10){
+   stopBetTimer();
+   for(const p of alive)if(!p.confirmed)p.betDeadline=null;
+   updateWaitingStatus();broadcast();return;
+ }
+ if(G.tournamentStarted&&alive.length<=1){
+   checkFinalWinner();return;
+ }
+ const now=Date.now();
+ for(const p of alive){
+   if(!p.confirmed&&!p.betDeadline){
+     p.betDeadline=now+BET_SECONDS*1000;
+     p.autoConfirmed=false;
+     p.betState=(p.bet.main+p.bet.pair+p.bet.trio)>0?'BETTING':'WAITING_BET';
+   }
+ }
+ stopBetTimer();
+ G.betTimer=setInterval(()=>{
+   if(G.gameStarted||G.tournamentOver){stopBetTimer();return}
+   const now2=Date.now();
+   let changed=false;
+   for(let i=0;i<G.players.length;i++){
+     const p=G.players[i];if(!p||p.confirmed||!p.betDeadline)continue;
+     if(now2>=p.betDeadline){
+       if(confirmPlayerBet(p,true)){changed=true}
+       else{
+         // 최소 베팅도 불가능하면 토너먼트에서는 탈락 처리.
+         if(G.tournamentStarted){
+           p.roundResult='잔액 부족 탈락';
+           G.players[i]=null;
+           changed=true;
+         }else{
+           p.betDeadline=now2+BET_SECONDS*1000;
+         }
+       }
+     }
+   }
+   if(checkFinalWinner())return;
+   updateWaitingStatus();broadcast();
+   maybeStart();
+ },500);
+ updateWaitingStatus();broadcast();maybeStart();
+}
+function maybeStart(){
+ if(G.gameStarted||G.tournamentOver||G.countdown)return;
+ const alive=alivePlayers();
+ if(!G.tournamentStarted&&alive.length!==10)return;
+ if(G.tournamentStarted&&alive.length<2){checkFinalWinner();return}
+ if(!alive.length||!alive.every(p=>p.confirmed))return;
+
+ stopBetTimer();
+ let n=3;
+ G.status=`전원 베팅 완료 · ${n}초 후 패 배분`;broadcast();
+ G.countdown=setInterval(()=>{
+   n--;
+   if(n<=0){
+     clearCountdown();
+     startRound();
+   }else{
+     G.status=`전원 베팅 완료 · ${n}초 후 패 배분`;broadcast();
+   }
+ },1000);
+}
 async function startRound(){
- G.gameStarted=true;G.dealing=true;G.settling=false;G.deck=makeDeck();G.dealerHand=[];G.turnOrder=[];G.turnIndex=0;G.activeHandIndex=0;G.hideHole=false;
- G.players.forEach((p,i)=>{if(!p)return;p.hands=[{cards:[],bet:p.bet.main,state:'PLAY',doubled:false,split:false,result:''}];p.initialCards=[];p.inRound=true;p.roundResult='';p.sideResult='';G.turnOrder.push(i)});
- G.status=`ROUND ${G.roundNo} · 딜러 오픈카드`;G.dealerHand.push(G.deck.pop());broadcast();await sleep(500);
- for(const i of G.turnOrder){G.status=`ROUND ${G.roundNo} · ${G.players[i].name} 첫 번째 카드`;G.players[i].hands[0].cards.push(G.deck.pop());broadcast();await sleep(330)}
- G.status=`ROUND ${G.roundNo} · 딜러 비하인드 카드`;G.dealerHand.push(G.deck.pop());G.hideHole=true;broadcast();await sleep(500);
+ const alive=alivePlayers();
+ if((!G.tournamentStarted&&alive.length!==10)||alive.length<2)return;
+ G.tournamentStarted=true;
+ G.gameStarted=true;G.dealing=true;G.settling=false;G.deck=makeDeck();G.dealerHand=[];
+ G.turnOrder=[];G.turnIndex=0;G.activeHandIndex=0;G.hideHole=false;
+
+ G.players.forEach((p,i)=>{
+   if(!p||!p.confirmed)return;
+   p.hands=[{cards:[],bet:p.bet.main,state:'PLAY',doubled:false,split:false,result:''}];
+   p.initialCards=[];p.inRound=true;p.roundResult='';p.sideResult='';
+   p.lastAction='WAIT';p.eliminatedPending=false;p.betDeadline=null;
+   G.turnOrder.push(i);
+ });
+ G.status=`ROUND ${G.roundNo} · 생존 ${G.turnOrder.length}명 · 딜러 오픈카드`;
+ G.dealerHand.push(G.deck.pop());broadcast();await sleep(500);
  for(const i of G.turnOrder){
-   const p=G.players[i],h=p.hands[0];G.status=`ROUND ${G.roundNo} · ${p.name} 두 번째 카드`;h.cards.push(G.deck.pop());p.initialCards=h.cards.map(c=>({...c}));
-   if(handValue(h.cards)===21)h.state='STAND';broadcast();await sleep(330);
+   if(!G.players[i])continue;
+   G.status=`ROUND ${G.roundNo} · ${G.players[i].name} 첫 번째 카드`;
+   G.players[i].hands[0].cards.push(G.deck.pop());broadcast();await sleep(330)
+ }
+ G.status=`ROUND ${G.roundNo} · 딜러 비하인드 카드`;
+ G.dealerHand.push(G.deck.pop());G.hideHole=true;broadcast();await sleep(500);
+ for(const i of G.turnOrder){
+   const p=G.players[i];if(!p)continue;
+   const h=p.hands[0];
+   G.status=`ROUND ${G.roundNo} · ${p.name} 두 번째 카드`;
+   h.cards.push(G.deck.pop());p.initialCards=h.cards.map(c=>({...c}));
+   if(handValue(h.cards)===21){h.state='STAND';p.lastAction='BLACKJACK'}
+   broadcast();await sleep(330);
  }
  G.dealing=false;G.status='딜링 완료 · 플레이 시작';broadcast();await sleep(350);advanceTurn();
 }
-function current(){if(G.turnIndex>=G.turnOrder.length)return [null,null,null];const seat=G.turnOrder[G.turnIndex],p=G.players[seat],h=p?.hands?.[G.activeHandIndex];return[seat,p,h]}
+function current(){
+ if(G.turnIndex>=G.turnOrder.length)return[null,null,null];
+ const seat=G.turnOrder[G.turnIndex],p=G.players[seat],h=p?.hands?.[G.activeHandIndex];
+ return[seat,p,h];
+}
 function advanceTurn(){
  while(G.turnIndex<G.turnOrder.length){
    const p=G.players[G.turnOrder[G.turnIndex]];
+   if(!p){G.turnIndex++;G.activeHandIndex=0;continue}
    while(G.activeHandIndex<p.hands.length&&p.hands[G.activeHandIndex].state!=='PLAY')G.activeHandIndex++;
    if(G.activeHandIndex<p.hands.length)break;
    G.turnIndex++;G.activeHandIndex=0;
  }
- if(G.turnIndex>=G.turnOrder.length){G.status='모든 플레이어 완료 · 딜러 비하인드 오픈';broadcast();revealDealer();return}
- const [seat,p,h]=current();G.status=`${p.name} 차례 · HIT / STAND / DOUBLE / SPLIT`;broadcast();
+ if(G.turnIndex>=G.turnOrder.length){
+   G.status='모든 플레이어 액션 완료 · 딜러 비하인드 오픈';broadcast();revealDealer();return
+ }
+ const [seat,p]=current();
+ p.lastAction='TURN';
+ G.status=`${p.name} 차례 · HIT / STAND / DOUBLE / SPLIT`;broadcast();
 }
 async function revealDealer(){
  G.settling=true;G.hideHole=false;G.status='딜러 비하인드 카드 오픈';broadcast();await sleep(650);
- while(handValue(G.dealerHand)<17){G.status=`딜러 ${handValue(G.dealerHand)} · HIT`;G.dealerHand.push(G.deck.pop());broadcast();await sleep(600)}
+ while(handValue(G.dealerHand)<17){
+   G.status=`딜러 ${handValue(G.dealerHand)} · HIT`;
+   G.dealerHand.push(G.deck.pop());broadcast();await sleep(600)
+ }
  G.status=`딜러 ${handValue(G.dealerHand)} · 정산`;broadcast();await sleep(500);settle();
 }
 function settle(){
@@ -141,151 +302,212 @@ function settle(){
      else res='LOSE';
      p.bank+=ret;h.result=res;texts.push(`${p.hands.length>1?'H'+(i+1)+' ':''}${res}`);
    }
-   if(p.bet.pair>0){const o=pairOdds(p.initialCards);if(o){p.bank+=p.bet.pair*(o+1);texts.push(`PP ${o}:1`)}else texts.push('PP LOSE')}
-   if(p.bet.trio>0){const o=trioOdds(p.initialCards,G.dealerHand[0]);if(o){p.bank+=p.bet.trio*(o+1);texts.push(`21+3 ${o}:1`)}else texts.push('21+3 LOSE')}
+   if(p.bet.pair>0){
+     const o=pairOdds(p.initialCards);
+     if(o){p.bank+=p.bet.pair*(o+1);texts.push(`PP ${o}:1`)}else texts.push('PP LOSE')
+   }
+   if(p.bet.trio>0){
+     const o=trioOdds(p.initialCards,G.dealerHand[0]);
+     if(o){p.bank+=p.bet.trio*(o+1);texts.push(`21+3 ${o}:1`)}else texts.push('21+3 LOSE')
+   }
+   const allBust=p.hands.length>0&&p.hands.every(h=>h.state==='BUST'||handValue(h.cards)>21);
+   if(allBust){
+     p.eliminatedPending=true;
+     p.lastAction='BUST';
+     texts.push('BUST OUT');
+   }else if(p.lastAction==='TURN'||p.lastAction==='WAIT'){
+     p.lastAction='ROUND DONE';
+   }
    p.roundResult=texts.join(' · ');
  }
- G.settling=false;G.status=`ROUND ${G.roundNo} 정산 완료 · 다음 라운드 준비`;broadcast();setTimeout(nextRound,4200);
+ G.settling=false;
+ const bustCount=alivePlayers().filter(p=>p.eliminatedPending).length;
+ G.status=`ROUND ${G.roundNo} 정산 완료${bustCount?` · BUST 탈락 ${bustCount}명`:''} · 다음 라운드 준비`;
+ broadcast();setTimeout(nextRound,4200);
 }
 function nextRound(){
- G.gameStarted=false;G.dealing=false;G.settling=false;G.dealerHand=[];G.hideHole=false;G.turnOrder=[];G.turnIndex=0;G.activeHandIndex=0;G.roundNo++;
- for(let i=0;i<G.players.length;i++){
-   const p=G.players[i];
-   if(!p)continue;
-   if(p.connected===false){
-     G.players[i]=null;
-     continue;
-   }
-   p.hands=[];p.initialCards=[];p.inRound=false;p.bet={main:0,pair:0,trio:0};
-   p.betLast={main:0,pair:0,trio:0};p.history=[];p.confirmed=false;p.roundResult='';
+ G.gameStarted=false;G.dealing=false;G.settling=false;G.dealerHand=[];G.hideHole=false;
+ G.turnOrder=[];G.turnIndex=0;G.activeHandIndex=0;G.roundNo++;
+
+ const before=aliveEntries();
+ const survivors=before.filter(({p})=>p.connected!==false&&!p.eliminatedPending&&p.bank>=MIN_BET);
+
+ if(survivors.length===0&&before.length){
+   // 동시 전멸 방지: 보유금이 가장 높은 플레이어를 최종 우승 처리.
+   const fallback=[...before].sort((a,b)=>b.p.bank-a.p.bank||a.i-b.i)[0];
+   return finishTournament(fallback);
  }
- updateWaitingStatus();
- G.status=`ROUND ${G.roundNo} · 다음 베팅을 시작하세요`;broadcast();
+ if(survivors.length===1)return finishTournament(survivors[0]);
+
+ const survivorSeats=new Set(survivors.map(x=>x.i));
+ for(let i=0;i<G.players.length;i++){
+   const p=G.players[i];if(!p)continue;
+   if(!survivorSeats.has(i)){G.players[i]=null;continue}
+   p.hands=[];p.initialCards=[];p.inRound=false;
+   p.bet={main:0,pair:0,trio:0};p.betLast={main:0,pair:0,trio:0};p.history=[];
+   p.confirmed=false;p.autoConfirmed=false;p.betDeadline=null;p.betState='WAITING_BET';
+   p.roundResult='';p.lastAction='WAIT';p.eliminatedPending=false;
+ }
+ updateWaitingStatus();broadcast();
+ armBettingClock();
 }
 
 io.on('connection',socket=>{
  socket.on('takeSeat',({seat,name,token})=>{
-   if(clearStaleWaitingSeats()) updateWaitingStatus();
+   if(clearStaleWaitingSeats())updateWaitingStatus();
    seat=Number(seat);name=String(name||'').trim().slice(0,12);token=String(token||'');
    socket.data.token=token;
    if(!token||seat<0||seat>9)return socket.emit('seatError','잘못된 좌석 요청입니다.');
    if(!name)return socket.emit('seatError','닉네임을 입력해주세요.');
 
    const existing=byToken(token);
-
    if(existing>=0){
      const p=G.players[existing];
-     if(G.gameStarted){
-       socket.emit('seatOk',{seat:existing});
-       return broadcast();
+     if(G.gameStarted||G.tournamentStarted){
+       socket.emit('seatOk',{seat:existing});return broadcast();
      }
-
      const duplicated=G.players.some((x,idx)=>x&&idx!==existing&&x.name.toLowerCase()===name.toLowerCase());
      if(duplicated)return socket.emit('seatError','이미 사용 중인 닉네임입니다.');
-
      if(seat!==existing){
        if(p.confirmed)return socket.emit('seatError','베팅 완료 후에는 자리를 이동할 수 없습니다.');
        if(G.players[seat])return socket.emit('seatError','이미 사용 중인 좌석입니다.');
-       G.players[seat]=p;
-       G.players[existing]=null;
+       G.players[seat]=p;G.players[existing]=null;
      }
-
-     G.players[seat].name=name;
-     G.players[seat].socketId=socket.id;
-     G.players[seat].connected=true;
-     G.players[seat].disconnectedAt=null;
-     socket.emit('seatOk',{seat});
-     updateWaitingStatus();
-     broadcast();
-     return;
+     G.players[seat].name=name;G.players[seat].socketId=socket.id;
+     G.players[seat].connected=true;G.players[seat].disconnectedAt=null;
+     socket.emit('seatOk',{seat});updateWaitingStatus();broadcast();armBettingClock();return;
    }
 
-   if(G.gameStarted)return socket.emit('seatError','게임 시작 후에는 중간 착석이 불가합니다.');
+   if(G.tournamentStarted||G.gameStarted)return socket.emit('seatError','대회 시작 후에는 중간 참가가 불가합니다.');
    if(G.players[seat])return socket.emit('seatError','이미 사용 중인 좌석입니다.');
    if(G.players.some(p=>p&&p.name.toLowerCase()===name.toLowerCase()))return socket.emit('seatError','이미 사용 중인 닉네임입니다.');
 
-   G.players[seat]={token,socketId:socket.id,connected:true,disconnectedAt:null,name,bank:START,bet:{main:0,pair:0,trio:0},betLast:{main:0,pair:0,trio:0},history:[],confirmed:false,hands:[],roundResult:''};
-   socket.emit('seatOk',{seat});
-   updateWaitingStatus();
-   broadcast();
+   G.players[seat]={
+     token,socketId:socket.id,connected:true,disconnectedAt:null,name,bank:START,
+     bet:{main:0,pair:0,trio:0},betLast:{main:0,pair:0,trio:0},history:[],
+     confirmed:false,autoConfirmed:false,betDeadline:null,betState:'WAITING_BET',
+     hands:[],roundResult:'',lastAction:'WAIT',eliminatedPending:false
+   };
+   socket.emit('seatOk',{seat});updateWaitingStatus();broadcast();armBettingClock();
  });
  socket.on('leaveSeat',({token})=>{
    socket.data.token=String(token||'');
    const i=byToken(socket.data.token);
    if(i<0)return socket.emit('seatLeft');
    const p=G.players[i];
-   if(G.gameStarted)return socket.emit('seatError','게임 진행 중에는 자리를 비울 수 없습니다.');
+   if(G.tournamentStarted)return socket.emit('seatError','대회 진행 중에는 자리를 비울 수 없습니다.');
    if(p.confirmed)return socket.emit('seatError','베팅 완료 후에는 자리를 비울 수 없습니다.');
-   G.players[i]=null;
-   socket.emit('seatLeft');
-   updateWaitingStatus();
-   broadcast();
+   G.players[i]=null;socket.emit('seatLeft');updateWaitingStatus();broadcast();armBettingClock();
  });
  socket.on('hello',({token})=>{
    socket.data.token=String(token||'');
    const i=byToken(socket.data.token);
    if(i>=0){
-     G.players[i].socketId=socket.id;
-     G.players[i].connected=true;
-     G.players[i].disconnectedAt=null;
+     G.players[i].socketId=socket.id;G.players[i].connected=true;G.players[i].disconnectedAt=null;
    }
    broadcast();
  });
  socket.on('betAdd',({token,mode,value})=>{
-   socket.data.token=String(token||'');const i=byToken(socket.data.token),p=G.players[i];value=Number(value);
+   socket.data.token=String(token||'');
+   const i=byToken(socket.data.token),p=G.players[i];value=Number(value);
    if(!p)return socket.emit('actionError','내 좌석이 없습니다.');
-   if(G.gameStarted||p.confirmed)return;
+   if(G.gameStarted||G.tournamentOver||p.confirmed)return;
+   if(!G.tournamentStarted&&alivePlayers().length<10){
+     // 10명 전에도 베팅 금액은 미리 올려둘 수 있습니다.
+   }
    if(!['main','pair','trio'].includes(mode)||![10000,50000,100000,200000,500000].includes(value))return;
-   const total=p.bet.main+p.bet.pair+p.bet.trio;if(total+value>p.bank)return socket.emit('actionError','보유금보다 많이 베팅할 수 없습니다.');
-   p.bet[mode]+=value;p.betLast[mode]=value;p.history.push({mode,v:value});broadcast();
+   const total=p.bet.main+p.bet.pair+p.bet.trio;
+   if(total+value>p.bank)return socket.emit('actionError','보유금보다 많이 베팅할 수 없습니다.');
+   p.bet[mode]+=value;p.betLast[mode]=value;p.history.push({mode,v:value});
+   p.betState='BETTING';broadcast();
  });
- socket.on('betUndo',({token})=>{const i=byToken(String(token||'')),p=G.players[i];if(!p||G.gameStarted||p.confirmed)return;const h=p.history.pop();if(h){p.bet[h.mode]=Math.max(0,p.bet[h.mode]-h.v);const prev=[...p.history].reverse().find(x=>x.mode===h.mode);p.betLast[h.mode]=prev?prev.v:0}broadcast()});
- socket.on('betClear',({token})=>{const i=byToken(String(token||'')),p=G.players[i];if(!p||G.gameStarted||p.confirmed)return;p.bet={main:0,pair:0,trio:0};p.betLast={main:0,pair:0,trio:0};p.history=[];broadcast()});
+ socket.on('betUndo',({token})=>{
+   const i=byToken(String(token||'')),p=G.players[i];
+   if(!p||G.gameStarted||G.tournamentOver||p.confirmed)return;
+   const h=p.history.pop();
+   if(h){
+     p.bet[h.mode]=Math.max(0,p.bet[h.mode]-h.v);
+     const prev=[...p.history].reverse().find(x=>x.mode===h.mode);
+     p.betLast[h.mode]=prev?prev.v:0;
+   }
+   p.betState=(p.bet.main+p.bet.pair+p.bet.trio)>0?'BETTING':'WAITING_BET';broadcast();
+ });
+ socket.on('betClear',({token})=>{
+   const i=byToken(String(token||'')),p=G.players[i];
+   if(!p||G.gameStarted||G.tournamentOver||p.confirmed)return;
+   p.bet={main:0,pair:0,trio:0};p.betLast={main:0,pair:0,trio:0};p.history=[];p.betState='WAITING_BET';broadcast();
+ });
  socket.on('betConfirm',({token})=>{
-   const i=byToken(String(token||'')),p=G.players[i];if(!p||G.gameStarted||p.confirmed)return;
-   const total=p.bet.main+p.bet.pair+p.bet.trio;if(total<=0)return socket.emit('actionError','베팅 금액을 먼저 선택하세요.');if(total>p.bank)return socket.emit('actionError','보유금이 부족합니다.');
-   p.bank-=total;p.confirmed=true;updateWaitingStatus();broadcast();maybeStart();
+   const i=byToken(String(token||'')),p=G.players[i];
+   if(!p||G.gameStarted||G.tournamentOver||p.confirmed)return;
+   const total=p.bet.main+p.bet.pair+p.bet.trio;
+   if(total<=0)return socket.emit('actionError','베팅 금액을 먼저 선택하세요.');
+   if(total>p.bank)return socket.emit('actionError','보유금이 부족합니다.');
+   confirmPlayerBet(p,false);
+   updateWaitingStatus();broadcast();
+   if(!G.tournamentStarted&&alivePlayers().length===10)armBettingClock();
+   maybeStart();
  });
  socket.on('turnAction',({token,action})=>{
-   const i=byToken(String(token||'')),[seat,p,h]=current();if(i<0||i!==seat||!p||!h||h.state!=='PLAY'||G.dealing||G.settling)return;
+   const i=byToken(String(token||'')),[seat,p,h]=current();
+   if(i<0||i!==seat||!p||!h||h.state!=='PLAY'||G.dealing||G.settling)return;
+
    if(action==='hit'){
-     h.cards.push(G.deck.pop());const v=handValue(h.cards);if(v>21){h.state='BUST';h.result='BUST';G.status=`${p.name} BUST · 다음 플레이어`;G.activeHandIndex++;broadcast();return setTimeout(advanceTurn,450)}
-     if(v===21){h.state='STAND';G.activeHandIndex++;broadcast();return setTimeout(advanceTurn,350)}
-     G.status=`${p.name} 차례 · 현재 ${v}`;broadcast();
-   }else if(action==='stand'){h.state='STAND';G.activeHandIndex++;broadcast();setTimeout(advanceTurn,200)}
-   else if(action==='double'){
-     if(!canDouble(p,h))return;p.bank-=h.bet;h.bet*=2;h.doubled=true;h.cards.push(G.deck.pop());const v=handValue(h.cards);if(v>21){h.state='BUST';h.result='BUST'}else h.state='STAND';G.activeHandIndex++;broadcast();setTimeout(advanceTurn,360)
+     p.lastAction='HIT';
+     h.cards.push(G.deck.pop());
+     const v=handValue(h.cards);
+     if(v>21){
+       h.state='BUST';h.result='BUST';
+       const allDoneBust=p.hands.every(x=>x.state==='BUST');
+       p.lastAction=allDoneBust?'BUST':'HIT · BUST';
+       G.status=`${p.name} BUST · 다음 플레이어`;
+       G.activeHandIndex++;broadcast();return setTimeout(advanceTurn,450)
+     }
+     if(v===21){
+       h.state='STAND';p.lastAction='STAND · 21';
+       G.activeHandIndex++;broadcast();return setTimeout(advanceTurn,350)
+     }
+     G.status=`${p.name} HIT · 현재 ${v}`;broadcast();
+   }else if(action==='stand'){
+     h.state='STAND';p.lastAction='STAND';
+     G.activeHandIndex++;G.status=`${p.name} STAND 완료`;broadcast();setTimeout(advanceTurn,200);
+   }else if(action==='double'){
+     if(!canDouble(p,h))return;
+     p.bank-=h.bet;h.bet*=2;h.doubled=true;h.cards.push(G.deck.pop());
+     const v=handValue(h.cards);
+     if(v>21){h.state='BUST';h.result='BUST';p.lastAction='DOUBLE · BUST'}
+     else{h.state='STAND';p.lastAction='DOUBLE · STAND'}
+     G.activeHandIndex++;broadcast();setTimeout(advanceTurn,360);
    }else if(action==='split'){
-     if(!canSplit(p,h))return;p.bank-=h.bet;const [c1,c2]=h.cards,bet=h.bet;
-     const h1={cards:[c1,G.deck.pop()],bet,state:'PLAY',doubled:false,split:true,result:''},h2={cards:[c2,G.deck.pop()],bet,state:'PLAY',doubled:false,split:true,result:''};
-     for(const x of [h1,h2]){const v=handValue(x.cards);if(v>21){x.state='BUST';x.result='BUST'}else if(v===21)x.state='STAND'}
-     p.hands.splice(G.activeHandIndex,1,h1,h2);broadcast();if(p.hands[G.activeHandIndex].state!=='PLAY'){G.activeHandIndex++;setTimeout(advanceTurn,220)}
+     if(!canSplit(p,h))return;
+     p.lastAction='SPLIT';
+     p.bank-=h.bet;const [c1,c2]=h.cards,bet=h.bet;
+     const h1={cards:[c1,G.deck.pop()],bet,state:'PLAY',doubled:false,split:true,result:''};
+     const h2={cards:[c2,G.deck.pop()],bet,state:'PLAY',doubled:false,split:true,result:''};
+     for(const x of [h1,h2]){
+       const v=handValue(x.cards);
+       if(v>21){x.state='BUST';x.result='BUST'}
+       else if(v===21)x.state='STAND'
+     }
+     p.hands.splice(G.activeHandIndex,1,h1,h2);broadcast();
+     if(p.hands[G.activeHandIndex].state!=='PLAY'){G.activeHandIndex++;setTimeout(advanceTurn,220)}
    }
  });
  socket.on('disconnect',()=>{
    const i=G.players.findIndex(p=>p&&p.socketId===socket.id);
    if(i>=0){
-     const p=G.players[i];
-     const token=p.token;
-     p.connected=false;
-     p.disconnectedAt=Date.now();
-     p.socketId=null;
-     broadcast();
-
+     const p=G.players[i],token=p.token;
+     p.connected=false;p.disconnectedAt=Date.now();p.socketId=null;broadcast();
      setTimeout(()=>{
        const idx=byToken(token);
        if(idx<0)return;
        const current=G.players[idx];
        const reconnected=[...io.sockets.sockets.values()].some(s=>s.data.token===token);
-       if(reconnected){
-         current.connected=true;
-         current.disconnectedAt=null;
-         return;
-       }
+       if(reconnected){current.connected=true;current.disconnectedAt=null;return}
        if(!G.gameStarted){
          G.players[idx]=null;
-         updateWaitingStatus();
-         broadcast();
+         if(checkFinalWinner())return;
+         updateWaitingStatus();broadcast();armBettingClock();
        }
      },20000);
    }
@@ -293,4 +515,4 @@ io.on('connection',socket=>{
  setTimeout(()=>socket.emit('state',snapshotFor(socket)),50);
 });
 
-server.listen(PORT,'0.0.0.0',()=>console.log(`BLACKJACK BASAN multiplayer on ${PORT}`));
+server.listen(PORT,'0.0.0.0',()=>console.log(`BLACKJACK BASAN V17 tournament multiplayer on ${PORT}`));

@@ -766,6 +766,27 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
 .btn.danger{background:linear-gradient(#7d2929,#4a1515);border-color:#9f4a4a}
 #leaveSeat{display:none;width:100%;margin-top:8px}
 
+
+/* V17 TOURNAMENT STATUS */
+.playerStateBadge{
+ display:block;margin-top:3px;padding:2px 6px;border-radius:999px;
+ font-size:clamp(7px,.78vw,10px);font-weight:1000;letter-spacing:.02em;
+ border:1px solid #686868;background:#141414;color:#eee;white-space:nowrap
+}
+.playerStateBadge.wait{border-color:#777;color:#cfcfcf}
+.playerStateBadge.betting{border-color:#d5a62b;color:#ffe381;background:#352a08}
+.playerStateBadge.done{border-color:#2c9b5d;color:#8cffb8;background:#092718}
+.playerStateBadge.auto{border-color:#388dcc;color:#99d7ff;background:#09263a}
+.playerStateBadge.turn{border-color:#f0c84e;color:#fff0a0;background:#42350a;box-shadow:0 0 12px #ffdb5544}
+.playerStateBadge.stand{border-color:#438fe6;color:#9ed1ff;background:#0b2845}
+.playerStateBadge.bust{border-color:#d33d45;color:#ff9aa0;background:#3a0c10}
+.playerStateBadge.champion{border-color:#f3d063;color:#ffe99c;background:#443609;box-shadow:0 0 16px #ffd95a55}
+#betClock{
+ margin:6px auto 0;color:#ffe17b;font-weight:1000;font-size:clamp(11px,1.15vw,15px);
+ min-height:20px
+}
+#confirmBet:disabled,.chipBtn:disabled,#undoBet:disabled,#clearBet:disabled{opacity:.35;filter:grayscale(.5)}
+
 </style>
 </head>
 <body>
@@ -777,7 +798,7 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
     <div class="introSub">BASAN · VIP CHAMPIONSHIP</div>
     <div class="introSuits">♠ <span class="red">♥</span> <span class="red">♦</span> ♣</div>
     <button id="enterTable" type="button">게임 참가 · ENTER TABLE</button>
-    <div class="introNote">10 SEATS · 고정 바이인 ₩1,000,000 · 같은 테이블 실시간 플레이</div>
+    <div class="introNote">10명 모이면 시작 · 고정 바이인 ₩1,000,000 · 최후 1인 토너먼트</div>
   </div>
 </div>
 
@@ -814,7 +835,8 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
   </div>
 
   <div id="betSummary">좌석을 선택하면 베팅할 수 있습니다.</div>
-  <div id="gameStartNotice">10명 전원 착석 시 자동 시작 <span id="countdownBadge"></span></div>
+  <div id="gameStartNotice">10명 모이면 시작합니다 <span id="countdownBadge"></span></div>
+  <div id="betClock"></div>
 
   <div id="betActions">
     <button class="actionBtn cancel" id="clearBet">✕ 베팅 취소</button>
@@ -851,7 +873,7 @@ const START=1000000;
 const money=n=>'₩'+Number(n||0).toLocaleString('ko-KR');
 const $=s=>document.querySelector(s);
 const socket=io();
-let state={players:Array(10).fill(null),dealerHand:[],gameStarted:false,dealing:false,settling:false,roundNo:1,status:'서버 연결 중...',turnSeat:null,activeHandIndex:0};
+let state={players:Array(10).fill(null),dealerHand:[],gameStarted:false,dealing:false,settling:false,tournamentStarted:false,tournamentOver:false,winnerName:'',roundNo:1,status:'서버 연결 중...',turnSeat:null,activeHandIndex:0,serverNow:Date.now(),betSeconds:10};
 let selected=null,pending=null,betMode='main';
 let token=localStorage.getItem('blackjack_basan_token');
 if(!token){
@@ -928,8 +950,8 @@ function openSeat(i){
    }
    return;
  }
- if(state.gameStarted){
-   alert('게임 시작 후에는 중간 착석이 불가합니다.');
+ if(state.gameStarted||state.tournamentStarted){
+   alert('대회 시작 후에는 중간 착석이 불가합니다.');
    return;
  }
  const mine=(mySeat!==null)?state.players[mySeat]:null;
@@ -1041,6 +1063,28 @@ $('#standBtn').onclick=()=>socket.emit('turnAction',{token,action:'stand'});
 $('#doubleBtn').onclick=()=>socket.emit('turnAction',{token,action:'double'});
 $('#splitBtn').onclick=()=>socket.emit('turnAction',{token,action:'split'});
 
+function betSecondsLeft(p){
+ if(!p?.betDeadline)return 0;
+ const serverNow=state.serverNow||Date.now();
+ return Math.max(0,Math.ceil((p.betDeadline-serverNow)/1000));
+}
+function playerBadge(p,i){
+ if(state.tournamentOver&&p.lastAction==='CHAMPION')return {txt:'🏆 FINAL WINNER',cls:'champion'};
+ if(!state.gameStarted){
+   if(p.confirmed)return {txt:p.autoConfirmed?'AUTO BET ✓':'BET ✓',cls:p.autoConfirmed?'auto':'done'};
+   const sec=betSecondsLeft(p);
+   const total=(p.bet?.main||0)+(p.bet?.pair||0)+(p.bet?.trio||0);
+   if(total>0)return {txt:`BETTING${sec?` · ${sec}s`:''}`,cls:'betting'};
+   return {txt:`NO BET${sec?` · ${sec}s`:''}`,cls:'wait'};
+ }
+ const hands=p.hands||[];
+ if(hands.length&&hands.every(h=>h.state==='BUST'||h.result==='BUST'))return {txt:'BUST · OUT',cls:'bust'};
+ if(i===state.turnSeat)return {txt:'▶ MY TURN',cls:'turn'};
+ if(p.lastAction&&p.lastAction.includes('STAND'))return {txt:`${p.lastAction} ✓`,cls:'stand'};
+ if(p.lastAction==='BUST'||String(p.lastAction||'').includes('BUST'))return {txt:p.lastAction,cls:'bust'};
+ if(p.lastAction&&p.lastAction!=='WAIT'&&p.lastAction!=='TURN')return {txt:p.lastAction,cls:'done'};
+ return {txt:'WAIT',cls:'wait'};
+}
 function render(){
  const players=state.players||Array(10).fill(null);
  $('#status').textContent=state.status||'';
@@ -1065,7 +1109,8 @@ function render(){
    const p=players[i]; if(!p)continue;
    const sx=seats[i][0],sy=seats[i][1];
    const owner=i===mySeat?' · YOU':'';
-   html+=`<div class="occupied" style="left:${sx}%;top:${sy+7.2}%">${escHTML(p.name)}${owner}<b>${money(p.bank)}</b>${p.roundResult?`<span class="roundResult">${escHTML(p.roundResult)}</span>`:''}</div>`;
+   const badge=playerBadge(p,i);
+   html+=`<div class="occupied" style="left:${sx}%;top:${sy+7.2}%">${escHTML(p.name)}${owner}<b>${money(p.bank)}</b><span class="playerStateBadge ${badge.cls}">${escHTML(badge.txt)}</span>${p.roundResult?`<span class="roundResult">${escHTML(p.roundResult)}</span>`:''}</div>`;
    if(p.hands&&p.hands.length){
      const allBust=p.hands.every(x=>x.state==='BUST');
      html+=`<div class="handGroup${allBust?' busted':''}" style="left:${sx}%;top:${sy-6.2}%">`;
@@ -1097,11 +1142,36 @@ function render(){
  const p=mySeat!==null?players[mySeat]:null;
  updatePersonalBetButtons();
  const summary=$('#betSummary');
- if(!p) summary.textContent='빈 좌석을 눌러 착석하면 베팅할 수 있습니다.';
+ const aliveCount=players.filter(Boolean).length;
+ if(!p) summary.textContent=state.tournamentStarted?'대회 진행 중 · 중간 참가 불가':'빈 좌석을 눌러 착석하면 베팅할 수 있습니다.';
  else{
    const total=p.bet.main+p.bet.pair+p.bet.trio;
-   summary.textContent=`${p.name} · 내 좌석 ${mySeat+1} · 보유금 ${money(p.bank)} · MAIN ${money(p.bet.main)} · PP ${money(p.bet.pair)} · 21+3 ${money(p.bet.trio)} · 합계 ${money(total)}${p.confirmed?' · 베팅 완료':''}`;
+   const sec=betSecondsLeft(p);
+   const betState=p.confirmed?(p.autoConfirmed?' · 자동 베팅 완료':' · 베팅 완료'):(sec?` · 자동확정까지 ${sec}초`:'');
+   summary.textContent=`${p.name} · 내 좌석 ${mySeat+1} · 보유금 ${money(p.bank)} · MAIN ${money(p.bet.main)} · PP ${money(p.bet.pair)} · 21+3 ${money(p.bet.trio)} · 합계 ${money(total)}${betState}`;
  }
+ const notice=$('#gameStartNotice'),clock=$('#betClock');
+ if(state.tournamentOver){
+   notice.textContent=`🏆 ${state.winnerName||'WINNER'} 최종 우승`;
+   clock.textContent='토너먼트 종료';
+ }else if(!state.tournamentStarted){
+   notice.textContent=`10명 모이면 시작합니다 · ${aliveCount} / 10`;
+   const secs=Math.max(0,...players.filter(Boolean).map(x=>betSecondsLeft(x)));
+   clock.textContent=aliveCount===10?(secs?`개인 베팅시간 ${secs}초 · 미확정은 시간 종료 시 자동베팅`:'전원 베팅 완료 대기 중'):'';
+ }else if(state.gameStarted){
+   notice.textContent=`생존 ${aliveCount}명 · 최후 1인까지 진행`;
+   clock.textContent='';
+ }else{
+   const done=players.filter(x=>x&&x.confirmed).length;
+   const secs=Math.max(0,...players.filter(Boolean).map(x=>betSecondsLeft(x)));
+   notice.textContent=`생존 ${aliveCount}명 · 베팅 완료 ${done} / ${aliveCount}`;
+   clock.textContent=secs?`개인 베팅시간 ${secs}초 · 시간 종료 시 현재 금액 자동확정`:'';
+ }
+ const bettingLocked=!p||state.gameStarted||state.tournamentOver||p.confirmed;
+ document.querySelectorAll('.chipBtn').forEach(b=>b.disabled=bettingLocked);
+ $('#undoBet').disabled=bettingLocked;
+ $('#clearBet').disabled=bettingLocked;
+ $('#confirmBet').disabled=bettingLocked;
  const myTurn=state.gameStarted&&state.turnSeat===mySeat&&!state.dealing&&!state.settling;
  $('#turnActions').classList.toggle('show',!!myTurn);
  const h=myTurn&&p?.hands?p.hands[state.activeHandIndex]:null;
