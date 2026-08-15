@@ -52,6 +52,20 @@ function canSplit(p,h){
 }
 function canDouble(p,h){return !!(p&&h&&h.cards.length===2&&!h.doubled&&p.bank>=h.bet)}
 function byToken(token){return G.players.findIndex(p=>p&&p.token===token)}
+function clearStaleWaitingSeats(){
+ if(G.gameStarted)return false;
+ const now=Date.now();let changed=false;
+ for(let i=0;i<G.players.length;i++){
+   const p=G.players[i];
+   if(!p||p.connected!==false||!p.disconnectedAt)continue;
+   const grace=p.confirmed?30000:15000;
+   if(now-p.disconnectedAt>=grace){
+     G.players[i]=null;
+     changed=true;
+   }
+ }
+ return changed;
+}
 function publicPlayer(p){if(!p)return null; const {token,socketId,...q}=p; return q}
 function snapshotFor(socket){
  const mySeat=byToken(socket.data.token);
@@ -135,24 +149,88 @@ function settle(){
 }
 function nextRound(){
  G.gameStarted=false;G.dealing=false;G.settling=false;G.dealerHand=[];G.hideHole=false;G.turnOrder=[];G.turnIndex=0;G.activeHandIndex=0;G.roundNo++;
- for(const p of G.players){if(!p)continue;p.hands=[];p.initialCards=[];p.inRound=false;p.bet={main:0,pair:0,trio:0};p.betLast={main:0,pair:0,trio:0};p.history=[];p.confirmed=false;p.roundResult=''}
+ for(let i=0;i<G.players.length;i++){
+   const p=G.players[i];
+   if(!p)continue;
+   if(p.connected===false){
+     G.players[i]=null;
+     continue;
+   }
+   p.hands=[];p.initialCards=[];p.inRound=false;p.bet={main:0,pair:0,trio:0};
+   p.betLast={main:0,pair:0,trio:0};p.history=[];p.confirmed=false;p.roundResult='';
+ }
+ updateWaitingStatus();
  G.status=`ROUND ${G.roundNo} · 다음 베팅을 시작하세요`;broadcast();
 }
 
 io.on('connection',socket=>{
  socket.on('takeSeat',({seat,name,token})=>{
+   if(clearStaleWaitingSeats()) updateWaitingStatus();
    seat=Number(seat);name=String(name||'').trim().slice(0,12);token=String(token||'');
    socket.data.token=token;
    if(!token||seat<0||seat>9)return socket.emit('seatError','잘못된 좌석 요청입니다.');
+   if(!name)return socket.emit('seatError','닉네임을 입력해주세요.');
+
    const existing=byToken(token);
-   if(existing>=0){socket.emit('seatOk',{seat:existing});return broadcast()}
+
+   if(existing>=0){
+     const p=G.players[existing];
+     if(G.gameStarted){
+       socket.emit('seatOk',{seat:existing});
+       return broadcast();
+     }
+
+     const duplicated=G.players.some((x,idx)=>x&&idx!==existing&&x.name.toLowerCase()===name.toLowerCase());
+     if(duplicated)return socket.emit('seatError','이미 사용 중인 닉네임입니다.');
+
+     if(seat!==existing){
+       if(p.confirmed)return socket.emit('seatError','베팅 완료 후에는 자리를 이동할 수 없습니다.');
+       if(G.players[seat])return socket.emit('seatError','이미 사용 중인 좌석입니다.');
+       G.players[seat]=p;
+       G.players[existing]=null;
+     }
+
+     G.players[seat].name=name;
+     G.players[seat].socketId=socket.id;
+     G.players[seat].connected=true;
+     G.players[seat].disconnectedAt=null;
+     socket.emit('seatOk',{seat});
+     updateWaitingStatus();
+     broadcast();
+     return;
+   }
+
    if(G.gameStarted)return socket.emit('seatError','게임 시작 후에는 중간 착석이 불가합니다.');
    if(G.players[seat])return socket.emit('seatError','이미 사용 중인 좌석입니다.');
    if(G.players.some(p=>p&&p.name.toLowerCase()===name.toLowerCase()))return socket.emit('seatError','이미 사용 중인 닉네임입니다.');
-   G.players[seat]={token,socketId:socket.id,name:name||`PLAYER${seat+1}`,bank:START,bet:{main:0,pair:0,trio:0},betLast:{main:0,pair:0,trio:0},history:[],confirmed:false,hands:[],roundResult:''};
-   socket.emit('seatOk',{seat});updateWaitingStatus();broadcast();
+
+   G.players[seat]={token,socketId:socket.id,connected:true,disconnectedAt:null,name,bank:START,bet:{main:0,pair:0,trio:0},betLast:{main:0,pair:0,trio:0},history:[],confirmed:false,hands:[],roundResult:''};
+   socket.emit('seatOk',{seat});
+   updateWaitingStatus();
+   broadcast();
  });
- socket.on('hello',({token})=>{socket.data.token=String(token||'');const i=byToken(socket.data.token);if(i>=0)G.players[i].socketId=socket.id;broadcast()});
+ socket.on('leaveSeat',({token})=>{
+   socket.data.token=String(token||'');
+   const i=byToken(socket.data.token);
+   if(i<0)return socket.emit('seatLeft');
+   const p=G.players[i];
+   if(G.gameStarted)return socket.emit('seatError','게임 진행 중에는 자리를 비울 수 없습니다.');
+   if(p.confirmed)return socket.emit('seatError','베팅 완료 후에는 자리를 비울 수 없습니다.');
+   G.players[i]=null;
+   socket.emit('seatLeft');
+   updateWaitingStatus();
+   broadcast();
+ });
+ socket.on('hello',({token})=>{
+   socket.data.token=String(token||'');
+   const i=byToken(socket.data.token);
+   if(i>=0){
+     G.players[i].socketId=socket.id;
+     G.players[i].connected=true;
+     G.players[i].disconnectedAt=null;
+   }
+   broadcast();
+ });
  socket.on('betAdd',({token,mode,value})=>{
    socket.data.token=String(token||'');const i=byToken(socket.data.token),p=G.players[i];value=Number(value);
    if(!p)return socket.emit('actionError','내 좌석이 없습니다.');
@@ -186,13 +264,30 @@ io.on('connection',socket=>{
  });
  socket.on('disconnect',()=>{
    const i=G.players.findIndex(p=>p&&p.socketId===socket.id);
-   if(i>=0&&!G.gameStarted){
-     const token=G.players[i].token;
+   if(i>=0){
+     const p=G.players[i];
+     const token=p.token;
+     p.connected=false;
+     p.disconnectedAt=Date.now();
+     p.socketId=null;
+     broadcast();
+
      setTimeout(()=>{
-       const p=G.players[i];
+       const idx=byToken(token);
+       if(idx<0)return;
+       const current=G.players[idx];
        const reconnected=[...io.sockets.sockets.values()].some(s=>s.data.token===token);
-       if(p&&p.token===token&&!reconnected&&!G.gameStarted){G.players[i]=null;updateWaitingStatus();broadcast()}
-     },60000);
+       if(reconnected){
+         current.connected=true;
+         current.disconnectedAt=null;
+         return;
+       }
+       if(!G.gameStarted){
+         G.players[idx]=null;
+         updateWaitingStatus();
+         broadcast();
+       }
+     },20000);
    }
  });
  setTimeout(()=>socket.emit('state',snapshotFor(socket)),50);
