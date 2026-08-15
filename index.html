@@ -787,38 +787,31 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
  </div>
 </div>
 
+<script src="/socket.io/socket.io.js"></script>
 <script>
-const START=1000000;
-const money=n=>'₩'+n.toLocaleString('ko-KR');
-let players=Array(10).fill(null),selected=null,pending=null,betMode='main',gameStarted=false,startTimer=null,startSeconds=5,turnOrder=[],turnIndex=0,roundDeck=[],dealerHand=[],activeHandIndex=0,dealing=false,settling=false,roundNo=1;
-const $=s=>document.querySelector(s);
 
+const START=1000000;
+const money=n=>'₩'+Number(n||0).toLocaleString('ko-KR');
+const $=s=>document.querySelector(s);
+const socket=io();
+let state={players:Array(10).fill(null),dealerHand:[],gameStarted:false,dealing:false,settling:false,roundNo:1,status:'서버 연결 중...',turnSeat:null,activeHandIndex:0};
+let selected=null,pending=null,betMode='main';
+let token=localStorage.getItem('blackjack_basan_token');
+if(!token){
+  token=(crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random().toString(36).slice(2));
+  localStorage.setItem('blackjack_basan_token',token);
+}
+let mySeat=null;
 const seatButtons=[];
 let lastPersonalBetSignature='';
+
 function escHTML(v){
- return String(v??'').replace(/[&<>"']/g,ch=>({
-   '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
- })[ch]);
+ return String(v??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 }
-
-
-/*
- 새 배경의 사람 아이콘 중심 좌표.
- 우측 1→5, 좌측 6→10 순서가 아니라 테이블 번호 그대로 1~10.
-*/
 const seats=[
- [84.7,34.0], // 1
- [91.0,52.0], // 2
- [84.2,69.2], // 3
- [71.3,82.2], // 4
- [57.3,87.1], // 5
- [43.2,87.1], // 6
- [29.2,82.2], // 7
- [15.7,69.2], // 8
- [9.6,52.0],  // 9
- [15.3,34.0]  // 10
+ [84.7,34.0],[91.0,52.0],[84.2,69.2],[71.3,82.2],[57.3,87.1],
+ [43.2,87.1],[29.2,82.2],[15.7,69.2],[9.6,52.0],[15.3,34.0]
 ];
-
 const betPos=[
  {main:[84.7,42.0],pair:[80.8,45.3],trio:[88.6,45.3]},
  {main:[91.0,60.0],pair:[87.1,63.3],trio:[94.9,63.3]},
@@ -830,8 +823,7 @@ const betPos=[
  {main:[15.7,77.0],pair:[11.8,80.3],trio:[19.6,80.3]},
  {main:[9.6,60.0],pair:[5.7,63.3],trio:[13.5,63.3]},
  {main:[15.3,42.0],pair:[11.4,45.3],trio:[19.2,45.3]}
-]
-
+];
 
 seats.forEach((xy,i)=>{
  const b=document.createElement('button');
@@ -841,16 +833,25 @@ seats.forEach((xy,i)=>{
  b.style.top=xy[1]+'%';
  b.onclick=()=>openSeat(i);
  $('#table').appendChild(b);
+ seatButtons.push(b);
 });
 
 function openSeat(i){
- if(players[i]){
-   selected=i;
-   render();
+ const p=state.players[i];
+ if(p){
+   if(i===mySeat){
+     selected=i; render();
+   }else{
+     alert(`${p.name} 님이 사용 중인 좌석입니다.`);
+   }
    return;
  }
- if(gameStarted){
+ if(state.gameStarted){
    alert('게임 시작 후에는 중간 착석이 불가합니다.');
+   return;
+ }
+ if(mySeat!==null){
+   alert('이미 다른 좌석에 착석했습니다.');
    return;
  }
  pending=i;
@@ -859,783 +860,166 @@ function openSeat(i){
  $('#join').classList.add('show');
  setTimeout(()=>$('#nick').focus(),80);
 }
-
 $('#cancel').onclick=()=>$('#join').classList.remove('show');
 $('#join').onclick=e=>{if(e.target.id==='join')$('#join').classList.remove('show')};
-
 $('#confirm').onclick=()=>{
- let name=$('#nick').value.trim() || `PLAYER${pending+1}`;
- if(players.some(p=>p && p.name.toLowerCase()===name.toLowerCase())){
-   alert('이미 사용 중인 닉네임입니다.');
-   return;
- }
- players[pending]={name,bank:START,bet:{main:0,pair:0,trio:0},betLast:{main:0,pair:0,trio:0},history:[],confirmed:false};
- selected=pending;
- $('#join').classList.remove('show');
- render();
-
- if(players.filter(Boolean).length===10 && !gameStarted){
-   $('#status').textContent='10명 착석 완료 · 전원 베팅 완료를 기다립니다.';
- }
+ if(pending==null)return;
+ const name=$('#nick').value.trim()||`PLAYER${pending+1}`;
+ socket.emit('takeSeat',{seat:pending,name,token});
 };
-
-
-
-function beginStartCountdown(){
-  clearInterval(startTimer);
-  startSeconds=5,turnOrder=[],turnIndex=0,roundDeck=[],dealerHand=[],activeHandIndex=0,dealing=false,settling=false,roundNo=1;
-  const badge=document.getElementById('countdownBadge');
-  if(badge) badge.textContent=`· ${startSeconds}초`;
-  $('#status').textContent=`전원 베팅 완료 · ${startSeconds}초 후 패 배분`;
-
-  startTimer=setInterval(()=>{
-    startSeconds--;
-    if(badge) badge.textContent=`· ${startSeconds}초`;
-    $('#status').textContent=`전원 베팅 완료 · ${startSeconds}초 후 패 배분`;
-
-    if(startSeconds<=0){
-      clearInterval(startTimer);
-      gameStarted=true;
-      if(badge) badge.textContent='· 게임 시작';
-      startBlackjackRound();
-    }
-  },1000);
-}
-
-function sleep(ms){return new Promise(resolve=>setTimeout(resolve,ms));}
-
-async function startBlackjackRound(){
-  const suits=['♠','♥','♦','♣'];
-  const ranks=['A','2','3','4','5','6','7','8','9','10','J','Q','K'];
-
-  dealing=true;
-  settling=false;
-  roundDeck=[];
-  for(let k=0;k<6;k++)for(const s of suits)for(const r of ranks)roundDeck.push({s,r});
-  for(let i=roundDeck.length-1;i>0;i--){
-    const j=Math.floor(Math.random()*(i+1));
-    [roundDeck[i],roundDeck[j]]=[roundDeck[j],roundDeck[i]];
-  }
-
-  dealerHand=[];
-  turnOrder=[];
-  turnIndex=0;
-  activeHandIndex=0;
-
-  players.forEach((p,i)=>{
-    if(!p)return;
-    p.hands=[{cards:[],bet:p.bet.main,state:'PLAY',doubled:false,split:false,result:''}];
-    p.initialCards=[];
-    p.inRound=true;
-    p.roundResult='';
-    p.sideResult='';
-    turnOrder.push(i);
-  });
-
-  // 1) 딜러 오픈카드
-  $('#status').textContent=`ROUND ${roundNo} · 딜러 오픈카드`;
-  dealerHand.push(roundDeck.pop());
-  render();
-  await sleep(500);
-
-  // 2) 플레이어 1장씩
-  for(const i of turnOrder){
-    $('#status').textContent=`ROUND ${roundNo} · ${players[i].name} 첫 번째 카드`;
-    players[i].hands[0].cards.push(roundDeck.pop());
-    render();
-    await sleep(330);
-  }
-
-  // 3) 딜러 홀카드
-  $('#status').textContent=`ROUND ${roundNo} · 딜러 비하인드 카드`;
-  dealerHand.push(roundDeck.pop());
-  render();
-  await sleep(500);
-
-  // 4) 플레이어 두 번째 카드 1장씩
-  for(const i of turnOrder){
-    const p=players[i],h=p.hands[0];
-    $('#status').textContent=`ROUND ${roundNo} · ${p.name} 두 번째 카드`;
-    h.cards.push(roundDeck.pop());
-    p.initialCards=h.cards.map(c=>({...c}));
-    if(handValue(h.cards)===21) h.state='STAND';
-    render();
-    await sleep(330);
-  }
-
-  dealing=false;
-  $('#status').textContent='딜링 완료 · 플레이 시작';
-  render();
-  await sleep(350);
-  advanceTurn();
-}
+socket.on('seatError',msg=>alert(msg));
+socket.on('actionError',msg=>alert(msg));
+socket.on('seatOk',({seat})=>{
+ mySeat=seat; selected=seat; pending=null; $('#join').classList.remove('show');
+});
+socket.on('state',s=>{
+ state=s;
+ mySeat=s.mySeat;
+ if(mySeat!==null) selected=mySeat;
+ render();
+});
 
 function handValue(cards){
  let total=0,aces=0;
- cards.forEach(c=>{
+ (cards||[]).forEach(c=>{
    if(c.r==='A'){total+=11;aces++}
-   else if(['K','Q','J'].includes(c.r))total+=10;
+   else if(['K','Q','J'].includes(c.r)) total+=10;
    else total+=Number(c.r);
  });
  while(total>21&&aces){total-=10;aces--}
  return total;
 }
-
-
-function rankNumber(r){
-  return r==='A'?14:r==='K'?13:r==='Q'?12:r==='J'?11:Number(r);
-}
-function perfectPairOdds(cards){
-  if(!cards || cards.length<2 || cards[0].r!==cards[1].r)return 0;
-  if(cards[0].s===cards[1].s)return 25;
-  const red=s=>s==='♥'||s==='♦';
-  return red(cards[0].s)===red(cards[1].s)?12:6;
-}
-function twentyOnePlusThreeOdds(cards,dealerUp){
-  if(!cards || cards.length<2 || !dealerUp)return 0;
-  const cs=[cards[0],cards[1],dealerUp];
-  const rs=cs.map(c=>rankNumber(c.r)).sort((a,b)=>a-b);
-  const flush=cs.every(c=>c.s===cs[0].s);
-  const trips=rs[0]===rs[2];
-  const straight=(rs[0]+1===rs[1]&&rs[1]+1===rs[2]) ||
-                 (rs[0]===2&&rs[1]===3&&rs[2]===14) ||
-                 (rs[0]===12&&rs[1]===13&&rs[2]===14);
-  if(trips&&flush)return 100;
-  if(straight&&flush)return 40;
-  if(trips)return 30;
-  if(straight)return 10;
-  if(flush)return 5;
-  return 0;
-}
-function isNaturalBlackjack(h){
-  return h.cards.length===2 && handValue(h.cards)===21 && !h.split;
-}
-
-function currentHand(){
-  if(turnIndex>=turnOrder.length)return null;
-  const p=players[turnOrder[turnIndex]];
-  if(!p||!p.hands)return null;
-  return p.hands[activeHandIndex]||null;
-}
-
-function canSplitHand(p,h){
-  if(!p||!h||h.cards.length!==2)return false;
-
-  const r1=h.cards[0].r;
-  const r2=h.cards[1].r;
-
-  // 사용자 룰:
-  // 1) 같은 랭크는 기존처럼 스플릿 가능 (예: 8+8, A+A, Q+Q)
-  // 2) J/Q/K는 서로 다른 조합이어도 모두 '페이스카드 20'로 보고 스플릿 가능
-  //    예: JQ, QK, KJ, JK, QJ, KQ
-  const sameRank=(r1===r2);
-  const faceCards=['J','Q','K'];
-  const faceTwenty=faceCards.includes(r1) && faceCards.includes(r2);
-
-  if(!(sameRank || faceTwenty))return false;
-
-  // 이미 스플릿한 핸드는 재스플릿 금지
-  if(h.split)return false;
-
-  // 스플릿은 현재 핸드의 메인베팅과 같은 금액이 추가로 필요
-  return p.bank>=h.bet;
-}
-
-function canDoubleHand(p,h){
-  if(!p||!h||h.cards.length!==2)return false;
-  if(h.doubled)return false;
-  return p.bank>=h.bet;
-}
-
-function updateActionButtons(){
-  if(turnIndex>=turnOrder.length){
-    ['hitBtn','standBtn','doubleBtn','splitBtn'].forEach(id=>$('#'+id).disabled=true);
-    return;
-  }
-  const p=players[turnOrder[turnIndex]],h=currentHand();
-  const active=!!(p&&h&&h.state==='PLAY'&&!dealing&&!settling);
-
-  $('#hitBtn').disabled=!active;
-  $('#standBtn').disabled=!active;
-  $('#doubleBtn').disabled=!(active&&canDoubleHand(p,h));
-  const splitOK=active&&canSplitHand(p,h);
-  $('#splitBtn').disabled=!splitOK;
-
-  if(active && h && h.cards.length===2){
-    const r1=h.cards[0].r, r2=h.cards[1].r;
-    const faces=['J','Q','K'];
-    const eligible=(r1===r2)||(faces.includes(r1)&&faces.includes(r2));
-    if(eligible && p.bank<h.bet){
-      $('#splitBtn').title=`스플릿 필요금액 ${money(h.bet)} · 보유금 부족`;
-    }else if(eligible){
-      $('#splitBtn').title=`스플릿 가능 · 추가 ${money(h.bet)}`;
-    }else{
-      $('#splitBtn').title='스플릿 불가';
-    }
-  }
-}
-
-function advanceTurn(){
-  while(turnIndex<turnOrder.length){
-    const p=players[turnOrder[turnIndex]];
-
-    while(activeHandIndex<p.hands.length && p.hands[activeHandIndex].state!=='PLAY'){
-      activeHandIndex++;
-    }
-
-    if(activeHandIndex<p.hands.length)break;
-
-    turnIndex++;
-    activeHandIndex=0;
-  }
-
-  if(turnIndex>=turnOrder.length){
-    $('#turnActions').classList.remove('show');
-    $('#turnInfo').textContent='모든 플레이어 선택 완료 · 딜러 진행';
-    $('#status').textContent='모든 플레이어 완료 · 딜러 비하인드 오픈';
-    revealDealerAndPlay();
-    render();
-    return;
-  }
-
-  selected=turnOrder[turnIndex];
-  const p=players[selected],h=currentHand();
-  $('#turnActions').classList.add('show');
-  $('#turnInfo').textContent=`${p.name} · HAND ${activeHandIndex+1}/${p.hands.length} · 현재 ${handValue(h.cards)}`;
-  $('#status').textContent=`${p.name} 차례 · HIT / STAND / DOUBLE / SPLIT`;
-  updateActionButtons();
-  render();
-}
-
-async function revealDealerAndPlay(){
-  settling=true;
-  render();
-
-  $('#status').textContent='딜러 비하인드 카드 오픈';
-  render();
-  await sleep(650);
-
-  while(handValue(dealerHand)<17){
-    $('#status').textContent=`딜러 ${handValue(dealerHand)} · HIT`;
-    dealerHand.push(roundDeck.pop());
-    render();
-    await sleep(600);
-  }
-
-  $('#status').textContent=`딜러 ${handValue(dealerHand)} · 정산`;
-  render();
-  await sleep(500);
-
-  settleRound();
-}
-
-function settleRound(){
-  const dealerValue=handValue(dealerHand);
-  const dealerBust=dealerValue>21;
-  const dealerBJ=(dealerHand.length===2 && dealerValue===21);
-
-  players.forEach(p=>{
-    if(!p||!p.inRound)return;
-
-    let mainNet=0;
-    const handTexts=[];
-
-    p.hands.forEach((h,hi)=>{
-      const v=handValue(h.cards);
-      let returned=0;
-      let result='';
-
-      if(v>21){
-        result='LOSE';
-      }else if(isNaturalBlackjack(h) && dealerBJ){
-        returned=h.bet;
-        result='PUSH';
-      }else if(isNaturalBlackjack(h) && !dealerBJ){
-        returned=h.bet*2.5;
-        result='BLACKJACK';
-      }else if(dealerBJ){
-        result='LOSE';
-      }else if(dealerBust){
-        returned=h.bet*2;
-        result='WIN';
-      }else if(v>dealerValue){
-        returned=h.bet*2;
-        result='WIN';
-      }else if(v===dealerValue){
-        returned=h.bet;
-        result='PUSH';
-      }else{
-        result='LOSE';
-      }
-
-      p.bank+=returned;
-      mainNet += returned-h.bet;
-      h.result=result;
-      handTexts.push(`${p.hands.length>1?'H'+(hi+1)+' ':''}${result}`);
-    });
-
-    // SIDE BETS: 최초 2장 + 딜러 오픈카드 기준
-    let sideReturned=0;
-    const sideTexts=[];
-
-    if(p.bet.pair>0){
-      const odds=perfectPairOdds(p.initialCards);
-      if(odds>0){
-        const ret=p.bet.pair*(odds+1);
-        p.bank+=ret;
-        sideReturned+=ret;
-        sideTexts.push(`PP ${odds}:1`);
-      }else{
-        sideTexts.push('PP LOSE');
-      }
-    }
-
-    if(p.bet.trio>0){
-      const odds=twentyOnePlusThreeOdds(p.initialCards,dealerHand[0]);
-      if(odds>0){
-        const ret=p.bet.trio*(odds+1);
-        p.bank+=ret;
-        sideReturned+=ret;
-        sideTexts.push(`21+3 ${odds}:1`);
-      }else{
-        sideTexts.push('21+3 LOSE');
-      }
-    }
-
-    p.sideResult=sideTexts.join(' · ');
-    p.roundResult=[...handTexts,...sideTexts].join(' · ');
-  });
-
-  settling=false;
-  render();
-  $('#status').textContent=`ROUND ${roundNo} 정산 완료 · 다음 라운드 준비`;
-
-  setTimeout(prepareNextRound,4200);
-}
-
-function prepareNextRound(){
-  gameStarted=false;
-  dealing=false;
-  settling=false;
-  dealerHand=[];
-  turnOrder=[];
-  turnIndex=0;
-  activeHandIndex=0;
-  roundNo++;
-
-  players.forEach(p=>{
-    if(!p)return;
-    p.hands=[];
-    p.initialCards=[];
-    p.inRound=false;
-    p.bet={main:0,pair:0,trio:0};
-    p.betLast={main:0,pair:0,trio:0};
-    p.history=[];
-    p.confirmed=false;
-    p.committedTotal=0;
-    p.sideResult='';
-    // roundResult는 다음 베팅을 시작할 때까지 잠시 남겨도 되지만 여기서 비움
-    p.roundResult='';
-  });
-
-  $('#turnActions').classList.remove('show');
-  $('#turnInfo').textContent='';
-  $('#status').textContent=`ROUND ${roundNo} · 다음 베팅을 시작하세요`;
-  render();
-}
-
-function cardValueText(c){
-  return `${c.r}${c.s}`;
-}
-
-
-function panelChipHTML(total,lastValue){
-  if(!total)return '';
-  const chipValue=lastValue||total;
-  const cls=chipClass(chipValue);
-  const label=`₩${Math.round(chipValue/1000)}K`;
-  const layers=Math.min(5,Math.max(1,Math.ceil(total/Math.max(chipValue,1))));
-  let html='';
-  for(let i=0;i<layers;i++){
-    html+=`<div class="panelChip ${cls}" style="top:${50-i*7}%"><span>${label}</span></div>`;
-  }
-  html+=`<div class="panelBetAmount">${money(total)}</div>`;
-  return html;
-}
-
-function updatePersonalBetButtons(){
-  const p=(selected!=null)?players[selected]:null;
-  const main=document.getElementById('mainPanelStack');
-  const pair=document.getElementById('pairPanelStack');
-  const trio=document.getElementById('trioPanelStack');
-  const mainBtn=document.getElementById('simpleMain');
-  if(!main||!pair||!trio)return;
-
-  const sig=p
-    ?`${selected}|${p.bet.main}|${p.bet.pair}|${p.bet.trio}|${p.betLast?.main||0}|${p.betLast?.pair||0}|${p.betLast?.trio||0}`
-    :'none';
-
-  if(sig===lastPersonalBetSignature)return;
-  lastPersonalBetSignature=sig;
-
-  if(!p){
-    main.innerHTML='';
-    pair.innerHTML='';
-    trio.innerHTML='';
-    if(mainBtn)mainBtn.classList.remove('hasBet');
-    return;
-  }
-
-  const last=p.betLast||{main:0,pair:0,trio:0};
-  main.innerHTML=panelChipHTML(p.bet.main,last.main);
-  pair.innerHTML=panelChipHTML(p.bet.pair,last.pair);
-  trio.innerHTML=panelChipHTML(p.bet.trio,last.trio);
-  if(mainBtn)mainBtn.classList.toggle('hasBet',p.bet.main>0);
-}
-
 function chipClass(v){
- return v>=500000?'c100':v>=200000?'c50':v>=100000?'c10':v>=50000?'c5':'c1';
+ if(v>=500000)return'c100';
+ if(v>=200000)return'c50';
+ if(v>=100000)return'c10';
+ if(v>=50000)return'c5';
+ return'c1';
 }
-function betChipHTML(v){
- if(!v)return '';
- const label=v>=100000 ? `₩${Math.round(v/1000)}K` : `₩${Math.round(v/1000)}K`;
- return `<div class="betChip ${chipClass(v)}"><span>${label}</span></div>`;
+function panelChipHTML(total,lastValue){
+ if(!total)return '';
+ const chipValue=lastValue||total, cls=chipClass(chipValue), label=`₩${Math.round(chipValue/1000)}K`;
+ const layers=Math.min(5,Math.max(1,Math.ceil(total/Math.max(chipValue,1))));
+ let h='';
+ for(let i=0;i<layers;i++) h+=`<div class="panelChip ${cls}" style="top:${50-i*7}%"><span>${label}</span></div>`;
+ h+=`<div class="panelBetAmount">${money(total)}</div>`;
+ return h;
 }
-
+function updatePersonalBetButtons(){
+ const p=(mySeat!==null)?state.players[mySeat]:null;
+ const main=$('#mainPanelStack'),pair=$('#pairPanelStack'),trio=$('#trioPanelStack'),mainBtn=$('#simpleMain');
+ if(!main||!pair||!trio)return;
+ const sig=p?`${mySeat}|${p.bet.main}|${p.bet.pair}|${p.bet.trio}|${p.betLast?.main||0}|${p.betLast?.pair||0}|${p.betLast?.trio||0}`:'none';
+ if(sig===lastPersonalBetSignature)return;
+ lastPersonalBetSignature=sig;
+ if(!p){main.innerHTML=pair.innerHTML=trio.innerHTML=''; if(mainBtn)mainBtn.classList.remove('hasBet'); return;}
+ const last=p.betLast||{main:0,pair:0,trio:0};
+ main.innerHTML=panelChipHTML(p.bet.main,last.main);
+ pair.innerHTML=panelChipHTML(p.bet.pair,last.pair);
+ trio.innerHTML=panelChipHTML(p.bet.trio,last.trio);
+ if(mainBtn)mainBtn.classList.toggle('hasBet',p.bet.main>0);
+}
 function setBetMode(mode){
  betMode=mode;
- const main=document.getElementById('simpleMain');
- const pair=document.getElementById('simplePair');
- const trio=document.getElementById('simpleTrio');
- if(main) main.classList.toggle('active',mode==='main');
- if(pair) pair.classList.toggle('active',mode==='pair');
- if(trio) trio.classList.toggle('active',mode==='trio');
- render();
+ $('#simpleMain')?.classList.toggle('active',mode==='main');
+ $('#simplePair')?.classList.toggle('active',mode==='pair');
+ $('#simpleTrio')?.classList.toggle('active',mode==='trio');
 }
 ['main','pair','trio'].forEach(mode=>{
-  const id=mode==='main'?'simpleMain':mode==='pair'?'simplePair':'simpleTrio';
-  const el=document.getElementById(id);
-  if(el){
-    el.addEventListener('click',(e)=>{
-      e.preventDefault();
-      e.stopPropagation();
-      setBetMode(mode);
-    });
-  }
+ const id=mode==='main'?'simpleMain':mode==='pair'?'simplePair':'simpleTrio';
+ $('#'+id)?.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();setBetMode(mode)});
 });
-
 document.querySelectorAll('.chipBtn').forEach(btn=>{
  btn.onclick=()=>{
-   if(gameStarted){
-     alert('게임이 시작되어 베팅이 마감되었습니다.');
-     return;
-   }
-   if(selected==null || !players[selected]){
-     alert('먼저 착석한 좌석을 선택하세요.');
-     return;
-   }
-   const p=players[selected];
-   if(p.confirmed){
-     alert('이미 베팅 완료했습니다.');
-     return;
-   }
-   const v=+btn.dataset.v;
-   const total=p.bet.main+p.bet.pair+p.bet.trio;
-   if(total+v>p.bank){
-     alert('보유금보다 많이 베팅할 수 없습니다.');
-     return;
-   }
-   p.bet[betMode]+=v;
-   p.betLast[betMode]=v;
-   p.history.push({mode:betMode,v});
-   p.confirmed=false;
-   render();
+   if(mySeat===null)return alert('먼저 빈 좌석에 착석하세요.');
+   socket.emit('betAdd',{token,mode:betMode,value:+btn.dataset.v});
  };
 });
-
-$('#undoBet').onclick=()=>{
- if(gameStarted)return;
- if(selected==null || !players[selected])return;
- const p=players[selected];
- if(p.confirmed)return;
- const h=p.history.pop();
- if(h){
-   p.bet[h.mode]=Math.max(0,p.bet[h.mode]-h.v);
-   const prev=[...p.history].reverse().find(x=>x.mode===h.mode);
-   p.betLast[h.mode]=prev?prev.v:0;
-   p.confirmed=false;
-   render();
- }
-};
-
-$('#clearBet').onclick=()=>{
- if(gameStarted)return;
- if(selected==null || !players[selected])return;
- const p=players[selected];
- if(p.confirmed)return;
- p.bet={main:0,pair:0,trio:0};
- p.betLast={main:0,pair:0,trio:0};
- p.history=[];
- p.confirmed=false;
- render();
-};
-
-$('#confirmBet').onclick=()=>{
- if(gameStarted)return;
- if(selected==null || !players[selected]){
-   alert('먼저 착석한 좌석을 선택하세요.');
-   return;
- }
- const p=players[selected];
- if(p.bet.main+p.bet.pair+p.bet.trio<=0){
-   alert('베팅 금액을 먼저 선택하세요.');
-   return;
- }
- const total=p.bet.main+p.bet.pair+p.bet.trio;
- if(total>p.bank){
-   alert('보유금이 부족합니다.');
-   return;
- }
- p.bank-=total;
- p.committedTotal=total;
- p.confirmed=true;
- render();
-
- const seated=players.filter(Boolean);
- if(seated.length===10 && seated.every(x=>x.confirmed)){
-   beginStartCountdown();
- }else if(seated.length===10){
-   const done=seated.filter(x=>x.confirmed).length;
-   $('#status').textContent=`10명 착석 완료 · 베팅 완료 ${done} / 10`;
- }
-};
-
-
-$('#hitBtn').onclick=()=>{
- if(!gameStarted)return;
- const p=players[turnOrder[turnIndex]],h=currentHand();
- if(!p||!h||h.state!=='PLAY')return;
-
- h.cards.push(roundDeck.pop());
- const v=handValue(h.cards);
-
- if(v>21){
-   // 21 초과 즉시 버스트. 더 이상 이 핸드는 진행하지 않음.
-   h.state='BUST';
-   h.result='BUST';
-   render();
-
-   $('#turnInfo').textContent=`${p.name} · BUST ${v}`;
-   $('#status').textContent=`${p.name} BUST · 다음 플레이어`;
-
-   activeHandIndex++;
-   setTimeout(advanceTurn,450);
-   return;
- }
-
- if(v===21){
-   h.state='STAND';
-   render();
-
-   $('#turnInfo').textContent=`${p.name} · 21`;
-   activeHandIndex++;
-   setTimeout(advanceTurn,350);
-   return;
- }
-
- render();
- $('#turnInfo').textContent=`${p.name} · HAND ${activeHandIndex+1}/${p.hands.length} · 현재 ${v}`;
- updateActionButtons();
-};
-
-$('#standBtn').onclick=()=>{
- if(!gameStarted)return;
- const h=currentHand();
- if(!h||h.state!=='PLAY')return;
-
- h.state='STAND';
- activeHandIndex++;
- render();
- setTimeout(advanceTurn,200);
-};
-
-$('#doubleBtn').onclick=()=>{
- if(!gameStarted)return;
- const p=players[turnOrder[turnIndex]],h=currentHand();
- if(!canDoubleHand(p,h))return;
-
- p.bank-=h.bet;
- h.bet*=2;
- h.doubled=true;
- h.cards.push(roundDeck.pop());
-
- const v=handValue(h.cards);
- if(v>21){
-   h.state='BUST';
-   h.result='BUST';
-   $('#status').textContent=`${p.name} DOUBLE BUST · ${v}`;
- }else{
-   h.state='STAND';
- }
-
- activeHandIndex++;
- render();
- setTimeout(advanceTurn,360);
-};
-
-$('#splitBtn').onclick=()=>{
- if(!gameStarted)return;
- const p=players[turnOrder[turnIndex]],h=currentHand();
- if(!canSplitHand(p,h))return;
-
- // 추가 메인베팅 차감
- p.bank-=h.bet;
-
- const c1=h.cards[0],c2=h.cards[1];
- const bet=h.bet;
-
- const h1={cards:[c1,roundDeck.pop()],bet,state:'PLAY',doubled:false,split:true};
- const h2={cards:[c2,roundDeck.pop()],bet,state:'PLAY',doubled:false,split:true};
-
- const v1=handValue(h1.cards),v2=handValue(h2.cards);
- if(v1>21){h1.state='BUST';h1.result='BUST'}
- else if(v1===21)h1.state='STAND';
- if(v2>21){h2.state='BUST';h2.result='BUST'}
- else if(v2===21)h2.state='STAND';
-
- p.hands.splice(activeHandIndex,1,h1,h2);
-
- render();
- updateActionButtons();
-
- if(p.hands[activeHandIndex].state!=='PLAY'){
-   activeHandIndex++;
-   setTimeout(advanceTurn,220);
- }else{
-   $('#turnInfo').textContent=`${p.name} · SPLIT HAND ${activeHandIndex+1}/${p.hands.length} · 현재 ${handValue(p.hands[activeHandIndex].cards)}`;
- }
-};
+$('#undoBet').onclick=()=>socket.emit('betUndo',{token});
+$('#clearBet').onclick=()=>socket.emit('betClear',{token});
+$('#confirmBet').onclick=()=>socket.emit('betConfirm',{token});
+$('#hitBtn').onclick=()=>socket.emit('turnAction',{token,action:'hit'});
+$('#standBtn').onclick=()=>socket.emit('turnAction',{token,action:'stand'});
+$('#doubleBtn').onclick=()=>socket.emit('turnAction',{token,action:'double'});
+$('#splitBtn').onclick=()=>socket.emit('turnAction',{token,action:'split'});
 
 function render(){
- const count=players.filter(Boolean).length;
-
- // Dealer: one HTML commit per frame.
+ const players=state.players||Array(10).fill(null);
+ $('#status').textContent=state.status||'';
  const dc=$('#dealerCards');
- if(dc){
-   let dealerHTML='';
-   dealerHand.forEach((c,idx)=>{
-     const holeHidden=(idx===1 && gameStarted && (dealing || turnIndex<turnOrder.length));
-     if(holeHidden){
-       dealerHTML+='<div class="dealerCard back"></div>';
-     }else{
-       const red=(c.s==='♥'||c.s==='♦')?' red':'';
-       dealerHTML+=`<div class="dealerCard${red}"><div style="position:relative;z-index:2;line-height:.9">${c.r}</div><div style="position:relative;z-index:2;font-size:.78em;margin-top:5px">${c.s}</div></div>`;
-     }
-   });
-   dc.innerHTML=dealerHTML;
-
-   const ds=$('#dealerScore');
-   if(ds){
-     if(dealerHand.length===0) ds.textContent='';
-     else if(dealing || turnIndex<turnOrder.length) ds.textContent=`OPEN ${handValue([dealerHand[0]])}`;
-     else ds.textContent=`TOTAL ${handValue(dealerHand)}`;
+ let dealerHTML='';
+ (state.dealerHand||[]).forEach((c,idx)=>{
+   const hidden=c.hidden;
+   if(hidden) dealerHTML+='<div class="dealerCard back"></div>';
+   else{
+     const red=(c.s==='♥'||c.s==='♦')?' red':'';
+     dealerHTML+=`<div class="dealerCard${red}"><div style="position:relative;z-index:2;line-height:.9">${c.r}</div><div style="position:relative;z-index:2;font-size:.78em;margin-top:5px">${c.s}</div></div>`;
    }
- }
+ });
+ dc.innerHTML=dealerHTML;
+ const visibleDealer=(state.dealerHand||[]).filter(c=>!c.hidden);
+ $('#dealerScore').textContent=visibleDealer.length?(state.hideHole?`OPEN ${handValue(visibleDealer.slice(0,1))}`:`TOTAL ${handValue(visibleDealer)}`):'';
 
- if(!gameStarted){
-   const confirmed=players.reduce((n,p)=>n+(p&&p.confirmed?1:0),0);
-   if(count<10) $('#status').textContent=`사람모양만 눌러 착석하세요 · ${count} / 10`;
-   else $('#status').textContent=`10명 착석 완료 · 베팅 완료 ${confirmed} / 10`;
- }else if(dealing){
-   // dealing status is controlled by the deal sequence
- }else if(turnIndex<turnOrder.length && players[turnOrder[turnIndex]]){
-   $('#status').textContent=`${players[turnOrder[turnIndex]].name} 차례 · HIT / STAND / DOUBLE / SPLIT`;
- }else if(settling){
-   // dealer/settlement sequence owns the status
- }else{
-   $('#status').textContent='게임 진행중 · 중간 착석 불가';
- }
+ for(let i=0;i<seatButtons.length;i++) seatButtons[i].classList.toggle('selected',mySeat===i);
 
- // Seat highlight: cached buttons, no querySelectorAll on every render.
- for(let i=0;i<seatButtons.length;i++){
-   seatButtons[i].classList.toggle('selected',selected===i);
- }
-
- // Build all non-interactive table overlays as one string and commit once.
  let html='';
  for(let i=0;i<players.length;i++){
-   const p=players[i];
-   if(!p)continue;
-
-   const sx=seats[i][0], sy=seats[i][1];
-   html+=`<div class="occupied" style="left:${sx}%;top:${sy+7.2}%">${escHTML(p.name)}<b>${money(p.bank)}</b>${p.roundResult?`<span class="roundResult">${escHTML(p.roundResult)}</span>`:''}</div>`;
-
-   if(p.hands && p.hands.length){
+   const p=players[i]; if(!p)continue;
+   const sx=seats[i][0],sy=seats[i][1];
+   const owner=i===mySeat?' · YOU':'';
+   html+=`<div class="occupied" style="left:${sx}%;top:${sy+7.2}%">${escHTML(p.name)}${owner}<b>${money(p.bank)}</b>${p.roundResult?`<span class="roundResult">${escHTML(p.roundResult)}</span>`:''}</div>`;
+   if(p.hands&&p.hands.length){
      const allBust=p.hands.every(x=>x.state==='BUST');
      html+=`<div class="handGroup${allBust?' busted':''}" style="left:${sx}%;top:${sy-6.2}%">`;
-
-     for(let hi=0;hi<p.hands.length;hi++){
-       const h=p.hands[hi];
+     p.hands.forEach((h,hi)=>{
        let cls='handTag';
        if(h.state==='BUST'||h.result==='BUST')cls+=' bust';
        else if(h.result==='WIN'||h.result==='BLACKJACK')cls+=' win';
        else if(h.result==='LOSE')cls+=' lose';
        else if(h.result==='PUSH')cls+=' push';
-
-       const hv=handValue(h.cards);
+       const hv=handValue(h.cards||[]);
        const shown=(h.state==='BUST'||h.result==='BUST')?`BUST ${hv}`:`${hv}`;
-       const txt=p.hands.length>1
-         ?`H${hi+1} · ${shown}${h.doubled?' · DOUBLE':''}${h.result&&h.result!=='BUST'?' · '+h.result:''}`
-         :`${shown}${h.doubled?' · DOUBLE':''}${h.result&&h.result!=='BUST'?' · '+h.result:''}`;
-
+       const txt=p.hands.length>1?`H${hi+1} · ${shown}${h.doubled?' · DOUBLE':''}${h.result&&h.result!=='BUST'?' · '+h.result:''}`:`${shown}${h.doubled?' · DOUBLE':''}${h.result&&h.result!=='BUST'?' · '+h.result:''}`;
        html+=`<div class="${cls}">${escHTML(txt)}</div><div class="handRow">`;
-       for(const c of h.cards){
+       (h.cards||[]).forEach(c=>{
          const red=(c.s==='♥'||c.s==='♦')?' red':'';
          html+=`<div class="playerCard${red}"><div style="position:relative;z-index:2;line-height:.9">${c.r}</div><div style="position:relative;z-index:2;font-size:.78em;margin-top:3px">${c.s}</div></div>`;
-       }
+       });
        html+='</div>';
-     }
+     });
      html+='</div>';
    }
-
-   // Only static labels near occupied seats; chips are shown on the personal bet buttons.
    for(const mode of ['main','pair','trio']){
-     const bp=betPos[i][mode];
-     const label=mode==='main'?'MAIN':mode==='pair'?'PP':'21+3';
+     const bp=betPos[i][mode],label=mode==='main'?'MAIN':mode==='pair'?'PP':'21+3';
      html+=`<div class="betLabel" style="left:${bp[0]}%;top:${bp[1]-3.5}%">${label}</div>`;
    }
  }
-
  $('#overlay').innerHTML=html;
 
- const p=selected!=null?players[selected]:null;
+ const p=mySeat!==null?players[mySeat]:null;
  updatePersonalBetButtons();
- if(gameStarted) updateActionButtons();
-
  const summary=$('#betSummary');
- if(!p){
-   summary.textContent='좌석을 선택하면 베팅할 수 있습니다.';
- }else{
+ if(!p) summary.textContent='빈 좌석을 눌러 착석하면 베팅할 수 있습니다.';
+ else{
    const total=p.bet.main+p.bet.pair+p.bet.trio;
-   summary.textContent=`${p.name} · 보유금 ${money(p.bank)} · MAIN ${money(p.bet.main)} · PP ${money(p.bet.pair)} · 21+3 ${money(p.bet.trio)} · 합계 ${money(total)}${p.confirmed?' · 차감 완료':''}`;
+   summary.textContent=`${p.name} · 내 좌석 ${mySeat+1} · 보유금 ${money(p.bank)} · MAIN ${money(p.bet.main)} · PP ${money(p.bet.pair)} · 21+3 ${money(p.bet.trio)} · 합계 ${money(total)}${p.confirmed?' · 베팅 완료':''}`;
  }
+ const myTurn=state.gameStarted&&state.turnSeat===mySeat&&!state.dealing&&!state.settling;
+ $('#turnActions').classList.toggle('show',!!myTurn);
+ const h=myTurn&&p?.hands?p.hands[state.activeHandIndex]:null;
+ $('#hitBtn').disabled=!myTurn;
+ $('#standBtn').disabled=!myTurn;
+ $('#doubleBtn').disabled=!(myTurn&&state.canDouble);
+ $('#splitBtn').disabled=!(myTurn&&state.canSplit);
+ $('#turnInfo').textContent=myTurn&&h?`${p.name} · HAND ${state.activeHandIndex+1}/${p.hands.length} · 현재 ${handValue(h.cards)}`:(state.turnSeat!==null&&players[state.turnSeat]?`${players[state.turnSeat].name} 차례`:'');
 }
 render();
-
-// Browser hint: avoid unnecessary synchronous layout reads during interaction.
-document.addEventListener('touchmove',()=>{}, {passive:true});
-
 window.addEventListener('load',()=>{
  if(window.matchMedia('(max-width:700px) and (orientation:portrait)').matches){
-   requestAnimationFrame(()=>{
-     window.scrollTo({
-       left:Math.max(0,(document.documentElement.scrollWidth-window.innerWidth)/2),
-       top:0,
-       behavior:'auto'
-     });
-   });
+   requestAnimationFrame(()=>window.scrollTo({left:Math.max(0,(document.documentElement.scrollWidth-window.innerWidth)/2),top:0,behavior:'auto'}));
  }
 });
+
 </script>
 </body>
 </html>
