@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>BLACKJACK BASAN V24 REAL CHIP SOUND</title>
+<title>BLACKJACK BASAN V25 REAL CHIP</title>
 <style>
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;background:#050505;color:#fff;font-family:system-ui,-apple-system,"Noto Sans KR",sans-serif}
@@ -818,9 +818,17 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
 #insuranceNo{background:#6e2429}
 #insuranceYes{background:#176a3c}
 
+
+#soundVersion{
+ position:fixed;right:6px;bottom:6px;z-index:99999;
+ font-size:9px;color:#d9c06a;background:#000b;border:1px solid #6e5b2d;
+ border-radius:6px;padding:3px 5px;pointer-events:none;opacity:.8
+}
+
 </style>
 </head>
 <body>
+<div id="soundVersion">V25 · REAL CHIP</div>
 
 <div id="introScreen" aria-label="BLACKJACK BASAN 입장 화면">
   <div class="introCard">
@@ -1069,9 +1077,9 @@ realChipAudio.preload='auto';
 realChipAudio.volume=0.92;
 
 function playChipSound(){
-  if(!soundUnlocked)return;
   try{
     realChipAudio.currentTime=0;
+    realChipAudio.volume=1.0;
     const p=realChipAudio.play();
     if(p&&typeof p.catch==='function')p.catch(()=>{});
   }catch(e){}
