@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>BLACKJACK BASAN V20</title>
+<title>BLACKJACK BASAN V21</title>
 <style>
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;background:#050505;color:#fff;font-family:system-ui,-apple-system,"Noto Sans KR",sans-serif}
@@ -804,6 +804,20 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
   pointer-events:none !important;
 }
 
+
+/* V21 INSURANCE */
+#insuranceModal{position:fixed;inset:0;z-index:9999;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.72);padding:18px}
+#insuranceModal.show{display:flex}
+.insuranceBox{width:min(92vw,430px);padding:22px 18px;border-radius:20px;text-align:center;background:linear-gradient(180deg,#15120a,#080807);border:1px solid #d7b74f;box-shadow:0 22px 70px #000}
+.insuranceBox h2{margin:0 0 8px;color:#f7db7a;font:900 26px Georgia,serif;letter-spacing:.06em}
+.insuranceBox p{margin:6px 0;color:#ddd;line-height:1.55;font-size:14px}
+#insuranceAmount{font-size:22px;font-weight:1000;color:#fff0a0;margin:12px 0}
+#insuranceClock{font-size:14px;color:#ffdf70;margin-bottom:12px;font-weight:900}
+.insuranceBtns{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.insuranceBtns button{border:0;border-radius:12px;padding:13px 8px;font-weight:1000;color:white}
+#insuranceNo{background:#6e2429}
+#insuranceYes{background:#176a3c}
+
 </style>
 </head>
 <body>
@@ -870,6 +884,20 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
  </div>
 </div>
 
+
+<div id="insuranceModal">
+ <div class="insuranceBox">
+   <h2>INSURANCE</h2>
+   <p>딜러의 오픈카드가 A입니다.<br>딜러 BLACKJACK에 대비해 보험을 선택하시겠습니까?</p>
+   <div id="insuranceAmount">보험금 ₩0</div>
+   <div id="insuranceClock">10초</div>
+   <div class="insuranceBtns">
+     <button id="insuranceNo" type="button">보험 안함</button>
+     <button id="insuranceYes" type="button">INSURANCE</button>
+   </div>
+ </div>
+</div>
+
 <div id="join">
  <div class="modal">
   <h2>TAKE A SEAT</h2>
@@ -890,7 +918,7 @@ const START=1000000;
 const money=n=>'₩'+Number(n||0).toLocaleString('ko-KR');
 const $=s=>document.querySelector(s);
 const socket=io();
-let state={players:Array(10).fill(null),eliminatedSeats:Array(10).fill(null),dealerHand:[],gameStarted:false,dealing:false,settling:false,tournamentStarted:false,tournamentOver:false,winnerName:'',roundNo:1,status:'서버 연결 중...',turnSeat:null,activeHandIndex:0,serverNow:Date.now(),betSeconds:10};
+let state={players:Array(10).fill(null),eliminatedSeats:Array(10).fill(null),dealerHand:[],gameStarted:false,dealing:false,settling:false,tournamentStarted:false,tournamentOver:false,winnerName:'',roundNo:1,status:'서버 연결 중...',turnSeat:null,activeHandIndex:0,serverNow:Date.now(),betSeconds:10,insuranceOpen:false,insuranceDeadline:null,insuranceSeconds:10};
 let selected=null,pending=null,betMode='main';
 let token=localStorage.getItem('blackjack_basan_token');
 if(!token){
@@ -1002,6 +1030,8 @@ $('#leaveSeat').onclick=()=>{
 };
 socket.on('seatError',msg=>alert(msg));
 socket.on('actionError',msg=>alert(msg));
+$('#insuranceYes').onclick=()=>socket.emit('insuranceChoice',{token,take:true});
+$('#insuranceNo').onclick=()=>socket.emit('insuranceChoice',{token,take:false});
 socket.on('seatOk',({seat})=>{
  mySeat=seat; selected=seat; pending=null;
  $('#join').classList.remove('show');
@@ -1205,12 +1235,27 @@ function render(){
    notice.textContent=`생존 ${aliveCount}명 · 베팅 완료 ${done} / ${aliveCount}`;
    clock.textContent=secs?`개인 베팅시간 ${secs}초 · 시간 종료 시 현재 금액 자동확정`:'';
  }
+ const insuranceModal=$('#insuranceModal');
+ const insuranceAmount=$('#insuranceAmount');
+ const insuranceClock=$('#insuranceClock');
+ const insurancePending=!!(state.insuranceOpen&&p&&p.inRound&&p.insuranceDecision===null);
+ if(insurancePending){
+   const amt=Math.floor(Number(p.bet?.main||0)/2);
+   const sec=state.insuranceDeadline?Math.max(0,Math.ceil((state.insuranceDeadline-Date.now())/1000)):state.insuranceSeconds||10;
+   insuranceAmount.textContent=`보험금 ${money(amt)} · 당첨 시 2:1`;
+   insuranceClock.textContent=`선택시간 ${sec}초 · 미선택 시 보험 안함`;
+   $('#insuranceYes').disabled=amt<=0||Number(p.bank||0)<amt;
+   insuranceModal.classList.add('show');
+ }else{
+   insuranceModal.classList.remove('show');
+ }
+
  const bettingLocked=!p||state.gameStarted||state.tournamentOver||p.confirmed;
  document.querySelectorAll('.chipBtn').forEach(b=>b.disabled=bettingLocked);
  $('#undoBet').disabled=bettingLocked;
  $('#clearBet').disabled=bettingLocked;
  $('#confirmBet').disabled=bettingLocked;
- const myTurn=state.gameStarted&&state.turnSeat===mySeat&&!state.dealing&&!state.settling;
+ const myTurn=state.gameStarted&&state.turnSeat===mySeat&&!state.dealing&&!state.settling&&!state.insuranceOpen;
  $('#turnActions').classList.toggle('show',!!myTurn);
  const h=myTurn&&p?.hands?p.hands[state.activeHandIndex]:null;
  $('#hitBtn').disabled=!myTurn;
@@ -1230,6 +1275,15 @@ if(introScreen && $('#bg')){
 }
 enterTable?.addEventListener('click',()=>introScreen?.classList.add('hide'));
 socket.on('connect',()=>socket.emit('hello',{token}));
+
+setInterval(()=>{
+ if(!state.insuranceOpen)return;
+ const p=mySeat!==null?(state.players||[])[mySeat]:null;
+ if(!p||p.insuranceDecision!==null)return;
+ const sec=state.insuranceDeadline?Math.max(0,Math.ceil((state.insuranceDeadline-Date.now())/1000)):0;
+ const el=$('#insuranceClock');
+ if(el)el.textContent=`선택시간 ${sec}초 · 미선택 시 보험 안함`;
+},250);
 
 render();
 window.addEventListener('load',()=>{

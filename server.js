@@ -9,9 +9,10 @@ const PORT=process.env.PORT||3000;
 const START=1000000;
 const MIN_BET=10000;
 const BET_SECONDS=10;
+const INSURANCE_SECONDS=10;
 
 app.use(express.static(__dirname));
-app.get('/health',(req,res)=>res.json({ok:true,version:'V19'}));
+app.get('/health',(req,res)=>res.json({ok:true,version:'V21'}));
 
 const G={
  players:Array(10).fill(null),
@@ -20,10 +21,12 @@ const G={
  tournamentStarted:false,tournamentOver:false,winnerName:'',
  roundNo:1,dealerHand:[],deck:[],turnOrder:[],turnIndex:0,activeHandIndex:0,
  status:'10명 모이면 시작합니다 · 0 / 10',
- countdown:null,betTimer:null,turnTimer:null,hideHole:false
+ countdown:null,betTimer:null,turnTimer:null,insuranceTimer:null,hideHole:false,
+ insuranceOpen:false,insuranceDeadline:null
 };
 
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const moneySafe=n=>'₩'+Math.round(Number(n||0)).toLocaleString('ko-KR');
 function makeDeck(){
  const suits=['♠','♥','♦','♣'],ranks=['A','2','3','4','5','6','7','8','9','10','J','Q','K'],d=[];
  for(let k=0;k<6;k++)for(const s of suits)for(const r of ranks)d.push({s,r});
@@ -73,6 +76,10 @@ function stopBetTimer(){
 function stopTurnTimer(){
  if(G.turnTimer){clearTimeout(G.turnTimer);G.turnTimer=null}
 }
+function stopInsuranceTimer(){
+ if(G.insuranceTimer){clearInterval(G.insuranceTimer);G.insuranceTimer=null}
+ G.insuranceDeadline=null;
+}
 function reserveEliminatedSeat(i,p,reason='탈락'){
  if(i<0||i>9)return;
  G.eliminatedSeats[i]={
@@ -111,6 +118,9 @@ function snapshotFor(socket){
    tournamentStarted:G.tournamentStarted,tournamentOver:G.tournamentOver,winnerName:G.winnerName,
    roundNo:G.roundNo,status:G.status,turnSeat,activeHandIndex:G.activeHandIndex,
    canSplit:turnSeat===mySeat&&canSplit(p,h),canDouble:turnSeat===mySeat&&canDouble(p,h),
+   insuranceOpen:G.insuranceOpen,
+   insuranceDeadline:G.insuranceDeadline,
+   insuranceSeconds:INSURANCE_SECONDS,
    mySeat,serverNow:Date.now(),betSeconds:BET_SECONDS
  };
 }
@@ -252,6 +262,7 @@ async function startRound(){
    p.hands=[{cards:[],bet:p.bet.main,state:'PLAY',doubled:false,split:false,result:''}];
    p.initialCards=[];p.inRound=true;p.roundResult='';p.sideResult='';
    p.lastAction='WAIT';p.eliminatedPending=false;p.betDeadline=null;
+   p.insuranceBet=0;p.insuranceDecision=null;
    G.turnOrder.push(i);
  });
  G.status=`ROUND ${G.roundNo} · 생존 ${G.turnOrder.length}명 · 딜러 오픈카드`;
@@ -271,8 +282,60 @@ async function startRound(){
    if(handValue(h.cards)===21){h.state='STAND';p.lastAction='BLACKJACK'}
    broadcast();await sleep(330);
  }
- G.dealing=false;G.status='딜링 완료 · 플레이 시작';broadcast();await sleep(350);advanceTurn();
+ G.dealing=false;
+ if(G.dealerHand[0]?.r==='A'){
+   openInsurance();
+ }else{
+   G.status='딜링 완료 · 플레이 시작';broadcast();await sleep(350);advanceTurn();
+ }
 }
+
+function openInsurance(){
+ stopInsuranceTimer();
+ G.insuranceOpen=true;
+ G.insuranceDeadline=Date.now()+INSURANCE_SECONDS*1000;
+ for(const i of G.turnOrder){
+   const p=G.players[i];
+   if(!p)continue;
+   p.insuranceBet=0;
+   p.insuranceDecision=null;
+ }
+ G.status=`딜러 오픈 A · INSURANCE 선택 ${INSURANCE_SECONDS}초`;
+ broadcast();
+ G.insuranceTimer=setInterval(()=>{
+   if(!G.insuranceOpen){stopInsuranceTimer();return}
+   if(Date.now()>=G.insuranceDeadline){
+     for(const i of G.turnOrder){
+       const p=G.players[i];
+       if(p&&p.insuranceDecision===null)p.insuranceDecision=false;
+     }
+     finishInsuranceChoices();
+   }
+ },250);
+}
+function allInsuranceDecided(){
+ return G.turnOrder.every(i=>{
+   const p=G.players[i];
+   return !p||p.insuranceDecision!==null;
+ });
+}
+function finishInsuranceChoices(){
+ if(!G.insuranceOpen||!allInsuranceDecided())return;
+ stopInsuranceTimer();
+ G.insuranceOpen=false;
+ const dealerBJ=G.dealerHand.length===2&&handValue(G.dealerHand)===21;
+ if(dealerBJ){
+   G.status='딜러 BLACKJACK · 보험 정산';
+   G.hideHole=false;
+   broadcast();
+   setTimeout(settle,700);
+ }else{
+   G.status='딜러 BLACKJACK 아님 · 플레이 시작';
+   broadcast();
+   setTimeout(advanceTurn,500);
+ }
+}
+
 function current(){
  if(G.turnIndex>=G.turnOrder.length)return[null,null,null];
  const seat=G.turnOrder[G.turnIndex],p=G.players[seat],h=p?.hands?.[G.activeHandIndex];
@@ -337,6 +400,14 @@ function settle(){
  for(const p of G.players){
    if(!p||!p.inRound)continue;
    const texts=[];
+   if((p.insuranceBet||0)>0){
+     if(dbj){
+       p.bank+=p.insuranceBet*3;
+       texts.push(`INSURANCE WIN ${moneySafe(p.insuranceBet*2)}`);
+     }else{
+       texts.push('INSURANCE LOSE');
+     }
+   }
    for(let i=0;i<p.hands.length;i++){
      const h=p.hands[i],v=handValue(h.cards);let ret=0,res='';
      if(v>21)res='LOSE';
@@ -359,21 +430,21 @@ function settle(){
    }
    const allBust=p.hands.length>0&&p.hands.every(h=>h.state==='BUST'||handValue(h.cards)>21);
    if(allBust){
-     p.eliminatedPending=true;
      p.lastAction='BUST';
-     texts.push('BUST OUT');
+     texts.push(p.bank>=MIN_BET?'BUST · 생존':'BUST · 잔액 소진');
    }else if(p.lastAction==='TURN'||p.lastAction==='WAIT'){
      p.lastAction='ROUND DONE';
    }
    p.roundResult=texts.join(' · ');
  }
  G.settling=false;
- const bustCount=alivePlayers().filter(p=>p.eliminatedPending).length;
- G.status=`ROUND ${G.roundNo} 정산 완료${bustCount?` · BUST 탈락 ${bustCount}명`:''} · 다음 라운드 준비`;
+ const brokeCount=alivePlayers().filter(p=>p.bank<MIN_BET).length;
+ G.status=`ROUND ${G.roundNo} 정산 완료${brokeCount?` · 잔액 부족 탈락 예정 ${brokeCount}명`:''} · 다음 라운드 준비`;
  broadcast();setTimeout(nextRound,4200);
 }
 function nextRound(){
- stopTurnTimer();
+ stopTurnTimer();stopInsuranceTimer();
+ G.insuranceOpen=false;
  G.gameStarted=false;G.dealing=false;G.settling=false;G.dealerHand=[];G.hideHole=false;
  G.turnOrder=[];G.turnIndex=0;G.activeHandIndex=0;G.roundNo++;
 
@@ -393,7 +464,7 @@ function nextRound(){
  if(survivors.length===1){
    for(const {i,p} of before){
      if(i!==survivors[0].i){
-       reserveEliminatedSeat(i,p,p.eliminatedPending?'BUST 탈락':'잔액 부족 탈락');
+       reserveEliminatedSeat(i,p,p.eliminatedPending?'자동 탈락':'잔액 부족 탈락');
        G.players[i]=null;
      }
    }
@@ -404,7 +475,7 @@ function nextRound(){
  for(let i=0;i<G.players.length;i++){
    const p=G.players[i];if(!p)continue;
    if(!survivorSeats.has(i)){
-     reserveEliminatedSeat(i,p,p.eliminatedPending?'BUST 탈락':'잔액 부족 탈락');
+     reserveEliminatedSeat(i,p,p.eliminatedPending?'자동 탈락':'잔액 부족 탈락');
      G.players[i]=null;
      continue;
    }
@@ -412,6 +483,7 @@ function nextRound(){
    p.bet={main:0,pair:0,trio:0};p.betLast={main:0,pair:0,trio:0};p.history=[];
    p.confirmed=false;p.autoConfirmed=false;p.betDeadline=null;p.betState='WAITING_BET';
    p.roundResult='';p.lastAction='WAIT';p.eliminatedPending=false;
+   p.insuranceBet=0;p.insuranceDecision=null;
  }
  updateWaitingStatus();broadcast();
  armBettingClock();
@@ -452,7 +524,7 @@ io.on('connection',socket=>{
      token,socketId:socket.id,connected:true,disconnectedAt:null,inactiveTurns:0,name,bank:START,
      bet:{main:0,pair:0,trio:0},betLast:{main:0,pair:0,trio:0},history:[],
      confirmed:false,autoConfirmed:false,betDeadline:null,betState:'WAITING_BET',
-     hands:[],roundResult:'',lastAction:'WAIT',eliminatedPending:false
+     hands:[],roundResult:'',lastAction:'WAIT',eliminatedPending:false,insuranceBet:0,insuranceDecision:null
    };
    socket.emit('seatOk',{seat});updateWaitingStatus();broadcast();armBettingClock();
  });
@@ -514,9 +586,28 @@ io.on('connection',socket=>{
    if(!G.tournamentStarted&&alivePlayers().length===10)armBettingClock();
    maybeStart();
  });
+ socket.on('insuranceChoice',({token,take})=>{
+   const i=byToken(String(token||'')),p=G.players[i];
+   if(!G.insuranceOpen||!p||!p.inRound||p.insuranceDecision!==null)return;
+   const amount=Math.floor((p.bet.main||0)/2);
+   if(take){
+     if(amount<=0)return socket.emit('actionError','MAIN 베팅이 없어 인슈어런스를 선택할 수 없습니다.');
+     if(p.bank<amount)return socket.emit('actionError','인슈어런스 베팅에 필요한 보유금이 부족합니다.');
+     p.bank-=amount;
+     p.insuranceBet=amount;
+     p.insuranceDecision=true;
+     p.lastAction='INSURANCE';
+   }else{
+     p.insuranceBet=0;
+     p.insuranceDecision=false;
+     p.lastAction='NO INSURANCE';
+   }
+   broadcast();
+   if(allInsuranceDecided())finishInsuranceChoices();
+ });
  socket.on('turnAction',({token,action})=>{
    const i=byToken(String(token||'')),[seat,p,h]=current();
-   if(i<0||i!==seat||!p||!h||h.state!=='PLAY'||G.dealing||G.settling)return;
+   if(i<0||i!==seat||!p||!h||h.state!=='PLAY'||G.dealing||G.settling||G.insuranceOpen)return;
    stopTurnTimer();
    p.inactiveTurns=0;
 
