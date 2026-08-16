@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>BLACKJACK BASAN V28 EXIT RESET</title>
+<title>BLACKJACK BASAN V29 WAIT FOR 10</title>
 <style>
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;background:#050505;color:#fff;font-family:system-ui,-apple-system,"Noto Sans KR",sans-serif}
@@ -845,7 +845,7 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
 </style>
 </head>
 <body>
-<div id="soundVersion">V28 · EXIT RESET</div>
+<div id="soundVersion">V29 · WAIT FOR 10</div>
 
 <div id="introScreen" aria-label="BLACKJACK BASAN 입장 화면">
   <div class="introCard">
@@ -906,7 +906,7 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
     <button class="turnBtn" id="doubleBtn">DOUBLE</button>
     <button class="turnBtn" id="splitBtn">SPLIT</button>
   </div>
-  <button id="exitResetBtn" type="button">🚪 나가기 · 새 게임 리셋</button>
+  <button id="exitResetBtn" type="button">🚪 나가기 · 새 대회 준비</button>
  </div>
 </div>
 
@@ -1380,12 +1380,18 @@ socket.on('connect',()=>socket.emit('hello',{token}));
 
 $('#exitResetBtn')?.addEventListener('click',()=>{
   if(!state.tournamentOver)return;
-  if(!confirm('대회를 종료하고 모든 좌석/보유금/기록을 초기화한 뒤 새 게임으로 돌아갈까요?'))return;
+  if(!confirm('우승 결과를 종료하고 새 대회를 준비할까요? 모든 자리가 비워지며, 다시 10명이 모여야 게임이 시작됩니다.'))return;
   socket.emit('resetTournament',{token});
 });
 socket.on('tournamentReset',()=>{
   try{localStorage.removeItem('blackjackSeat')}catch(e){}
-  location.reload();
+  mySeat=null;
+  selected=null;
+  pending=null;
+  if(introScreen) introScreen.classList.remove('hide');
+  const joinModal=$('#join');
+  if(joinModal) joinModal.classList.remove('show');
+  render();
 });
 
 

@@ -13,7 +13,7 @@ const BET_SECONDS=10;
 const INSURANCE_SECONDS=10;
 
 app.use(express.static(__dirname));
-app.get('/health',(req,res)=>res.json({ok:true,version:'V28_EXIT_RESET'}));
+app.get('/health',(req,res)=>res.json({ok:true,version:'V29_WAIT_FOR_10'}));
 
 const G={
  players:Array(10).fill(null),
