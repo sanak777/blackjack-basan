@@ -13,7 +13,7 @@ const BET_SECONDS=10;
 const INSURANCE_SECONDS=10;
 
 app.use(express.static(__dirname));
-app.get('/health',(req,res)=>res.json({ok:true,version:'V27_TARGET_WIN'}));
+app.get('/health',(req,res)=>res.json({ok:true,version:'V28_EXIT_RESET'}));
 
 const G={
  players:Array(10).fill(null),
@@ -188,6 +188,39 @@ function checkTargetWinner(){
  finishTournament(winner);
  return true;
 }
+
+function resetTournament(){
+ stopBetTimer();stopTurnTimer();stopInsuranceTimer();clearCountdown();
+
+ G.players=Array(10).fill(null);
+ G.eliminatedSeats=Array(10).fill(null);
+ G.gameStarted=false;
+ G.dealing=false;
+ G.settling=false;
+ G.tournamentStarted=false;
+ G.tournamentOver=false;
+ G.winnerName='';
+ G.roundNo=1;
+ G.dealerHand=[];
+ G.deck=[];
+ G.turnOrder=[];
+ G.turnIndex=0;
+ G.activeHandIndex=0;
+ G.status='10명 모이면 시작합니다 · 0 / 10';
+ G.countdown=null;
+ G.betTimer=null;
+ G.turnTimer=null;
+ G.insuranceTimer=null;
+ G.hideHole=false;
+ G.insuranceOpen=false;
+ G.insuranceDeadline=null;
+
+ // 연결 자체는 유지하되, 모든 참가자의 좌석/대회 상태를 완전히 초기화
+ for(const s of io.sockets.sockets.values())s.data.token='';
+ broadcast();
+ io.emit('tournamentReset');
+}
+
 function confirmPlayerBet(p,auto=false){
  if(!p||p.confirmed)return false;
  let total=p.bet.main+p.bet.pair+p.bet.trio;
@@ -672,6 +705,11 @@ io.on('connection',socket=>{
      p.hands.splice(G.activeHandIndex,1,h1,h2);broadcast();
      if(p.hands[G.activeHandIndex].state!=='PLAY'){G.activeHandIndex++;setTimeout(advanceTurn,220)}
    }
+ });
+ socket.on('resetTournament',({token})=>{
+   socket.data.token=String(token||'');
+   if(!G.tournamentOver)return socket.emit('actionError','대회 종료 후에만 리셋할 수 있습니다.');
+   resetTournament();
  });
  socket.on('disconnect',()=>{
    const i=G.players.findIndex(p=>p&&p.socketId===socket.id);

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>BLACKJACK BASAN V26 REAL CHIP + CARD</title>
+<title>BLACKJACK BASAN V28 EXIT RESET</title>
 <style>
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;background:#050505;color:#fff;font-family:system-ui,-apple-system,"Noto Sans KR",sans-serif}
@@ -825,10 +825,27 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
  border-radius:6px;padding:3px 5px;pointer-events:none;opacity:.8
 }
 
+
+#exitResetBtn{
+ display:none;
+ width:min(520px,92%);
+ margin:12px auto 0;
+ padding:14px 18px;
+ border-radius:12px;
+ border:1px solid #d7b552;
+ background:linear-gradient(180deg,#6b1717,#3c0909);
+ color:#fff3cf;
+ font-weight:1000;
+ font-size:clamp(13px,1.45vw,18px);
+ box-shadow:0 0 18px #0008, inset 0 0 12px #ffcf4522;
+ cursor:pointer;
+}
+#exitResetBtn.show{display:block}
+
 </style>
 </head>
 <body>
-<div id="soundVersion">V26 · REAL CHIP + CARD</div>
+<div id="soundVersion">V28 · EXIT RESET</div>
 
 <div id="introScreen" aria-label="BLACKJACK BASAN 입장 화면">
   <div class="introCard">
@@ -889,6 +906,7 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
     <button class="turnBtn" id="doubleBtn">DOUBLE</button>
     <button class="turnBtn" id="splitBtn">SPLIT</button>
   </div>
+  <button id="exitResetBtn" type="button">🚪 나가기 · 새 게임 리셋</button>
  </div>
 </div>
 
@@ -1316,6 +1334,9 @@ function render(){
    notice.textContent=`생존 ${aliveCount}명 · 베팅 완료 ${done} / ${aliveCount}`;
    clock.textContent=secs?`개인 베팅시간 ${secs}초 · 시간 종료 시 현재 금액 자동확정`:'';
  }
+ const exitResetBtn=$('#exitResetBtn');
+ if(exitResetBtn)exitResetBtn.classList.toggle('show',!!state.tournamentOver);
+
  const insuranceModal=$('#insuranceModal');
  const insuranceAmount=$('#insuranceAmount');
  const insuranceClock=$('#insuranceClock');
@@ -1356,6 +1377,17 @@ if(introScreen && $('#bg')){
 }
 enterTable?.addEventListener('click',()=>{unlockSound();introScreen?.classList.add('hide')});
 socket.on('connect',()=>socket.emit('hello',{token}));
+
+$('#exitResetBtn')?.addEventListener('click',()=>{
+  if(!state.tournamentOver)return;
+  if(!confirm('대회를 종료하고 모든 좌석/보유금/기록을 초기화한 뒤 새 게임으로 돌아갈까요?'))return;
+  socket.emit('resetTournament',{token});
+});
+socket.on('tournamentReset',()=>{
+  try{localStorage.removeItem('blackjackSeat')}catch(e){}
+  location.reload();
+});
+
 
 setInterval(()=>{
  if(!state.insuranceOpen)return;
