@@ -7,12 +7,13 @@ const server=http.createServer(app);
 const io=new Server(server,{pingInterval:12000,pingTimeout:25000});
 const PORT=process.env.PORT||3000;
 const START=1000000;
+const WIN_TARGET=10000000;
 const MIN_BET=10000;
 const BET_SECONDS=10;
 const INSURANCE_SECONDS=10;
 
 app.use(express.static(__dirname));
-app.get('/health',(req,res)=>res.json({ok:true,version:'V21'}));
+app.get('/health',(req,res)=>res.json({ok:true,version:'V27_TARGET_WIN'}));
 
 const G={
  players:Array(10).fill(null),
@@ -171,6 +172,21 @@ function checkFinalWinner(){
  const alive=aliveEntries();
  if(G.tournamentStarted&&alive.length===1){finishTournament(alive[0]);return true}
  return false;
+}
+
+function checkTargetWinner(){
+ if(!G.tournamentStarted||G.tournamentOver)return false;
+ const alive=aliveEntries();
+ if(!alive.some(({p})=>Number(p.bank||0)>=WIN_TARGET))return false;
+
+ // 목표금액 이상이 여러 명이어도 현재 보유금이 가장 높은 1명이 우승.
+ // 완전히 같은 금액이면 좌석 번호가 빠른 사람을 안정적인 타이브레이커로 사용.
+ const winner=[...alive].sort((a,b)=>Number(b.p.bank||0)-Number(a.p.bank||0)||a.i-b.i)[0];
+ if(!winner||Number(winner.p.bank||0)<WIN_TARGET)return false;
+
+ G.status=`🏆 ${winner.p.name} ${moneySafe(winner.p.bank)} · 목표 ${moneySafe(WIN_TARGET)} 달성 · 최종 우승`;
+ finishTournament(winner);
+ return true;
 }
 function confirmPlayerBet(p,auto=false){
  if(!p||p.confirmed)return false;
@@ -438,6 +454,11 @@ function settle(){
    p.roundResult=texts.join(' · ');
  }
  G.settling=false;
+
+ // 정산이 모두 끝난 시점의 실제 보유금으로 목표 우승 판정.
+ // 10,000,000원 이상이 여러 명이면 그중(=전체 생존자 중) 보유금 최고액 1명이 즉시 우승.
+ if(checkTargetWinner())return;
+
  const brokeCount=alivePlayers().filter(p=>p.bank<MIN_BET).length;
  G.status=`ROUND ${G.roundNo} 정산 완료${brokeCount?` · 잔액 부족 탈락 예정 ${brokeCount}명`:''} · 다음 라운드 준비`;
  broadcast();setTimeout(nextRound,4200);
