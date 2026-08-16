@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>BLACKJACK RECOVERY BASE V1</title>
+<title>BLACKJACK BASAN V20</title>
 <style>
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;background:#050505;color:#fff;font-family:system-ui,-apple-system,"Noto Sans KR",sans-serif}
@@ -36,6 +36,13 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
  box-shadow:0 4px 10px #0008
 }
 .occupied b{display:block;color:#ffe079;margin-top:1px}
+.eliminatedSeat{
+ position:absolute;transform:translate(-50%,-50%);z-index:42;pointer-events:none;
+ min-width:82px;padding:7px 8px;border-radius:10px;text-align:center;
+ background:rgba(38,5,7,.88);border:1px solid #b43e46;color:#ffb5ba;
+ font-size:clamp(8px,1vw,12px);font-weight:1000;box-shadow:0 4px 12px #0009
+}
+.eliminatedSeat b{display:block;margin-top:2px;color:#ff6d76;letter-spacing:.05em}
 #footer{
  min-height:145px;background:linear-gradient(#111,#050505);
  border-top:1px solid #4f4022;padding:18px;text-align:center
@@ -787,6 +794,16 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
 }
 #confirmBet:disabled,.chipBtn:disabled,#undoBet:disabled,#clearBet:disabled{opacity:.35;filter:grayscale(.5)}
 
+
+/* V20 seat-circle hard hide */
+.seatBtn.seatOccupied,
+.seatBtn.seatEliminated{
+  display:none !important;
+  visibility:hidden !important;
+  opacity:0 !important;
+  pointer-events:none !important;
+}
+
 </style>
 </head>
 <body>
@@ -873,7 +890,7 @@ const START=1000000;
 const money=n=>'₩'+Number(n||0).toLocaleString('ko-KR');
 const $=s=>document.querySelector(s);
 const socket=io();
-let state={players:Array(10).fill(null),dealerHand:[],gameStarted:false,dealing:false,settling:false,tournamentStarted:false,tournamentOver:false,winnerName:'',roundNo:1,status:'서버 연결 중...',turnSeat:null,activeHandIndex:0,serverNow:Date.now(),betSeconds:10};
+let state={players:Array(10).fill(null),eliminatedSeats:Array(10).fill(null),dealerHand:[],gameStarted:false,dealing:false,settling:false,tournamentStarted:false,tournamentOver:false,winnerName:'',roundNo:1,status:'서버 연결 중...',turnSeat:null,activeHandIndex:0,serverNow:Date.now(),betSeconds:10};
 let selected=null,pending=null,betMode='main';
 let token=localStorage.getItem('blackjack_basan_token');
 if(!token){
@@ -888,20 +905,20 @@ function escHTML(v){
  return String(v??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 }
 const seats=[
- [84.7,34.0],[91.0,52.0],[84.2,69.2],[71.3,82.2],[57.3,87.1],
- [43.2,87.1],[29.2,82.2],[15.7,69.2],[9.6,52.0],[15.3,34.0]
+ [82.0,29.5],[92.0,47.5],[86.0,67.5],[71.5,81.5],[57.0,87.5],
+ [43.0,87.5],[28.5,81.5],[14.0,67.5],[8.0,47.5],[18.0,29.5]
 ];
 const betPos=[
- {main:[84.7,42.0],pair:[80.8,45.3],trio:[88.6,45.3]},
- {main:[91.0,60.0],pair:[87.1,63.3],trio:[94.9,63.3]},
- {main:[84.2,77.0],pair:[80.3,80.3],trio:[88.1,80.3]},
- {main:[71.3,87.0],pair:[67.4,90.0],trio:[75.2,90.0]},
- {main:[57.3,90.0],pair:[53.4,93.0],trio:[61.2,93.0]},
- {main:[43.2,90.0],pair:[39.3,93.0],trio:[47.1,93.0]},
- {main:[29.2,87.0],pair:[25.3,90.0],trio:[33.1,90.0]},
- {main:[15.7,77.0],pair:[11.8,80.3],trio:[19.6,80.3]},
- {main:[9.6,60.0],pair:[5.7,63.3],trio:[13.5,63.3]},
- {main:[15.3,42.0],pair:[11.4,45.3],trio:[19.2,45.3]}
+ {main:[82.0,38.0],pair:[78.1,41.3],trio:[85.9,41.3]},
+ {main:[92.0,56.0],pair:[88.1,59.3],trio:[95.9,59.3]},
+ {main:[86.0,76.0],pair:[82.1,79.3],trio:[89.9,79.3]},
+ {main:[71.5,87.0],pair:[67.6,90.0],trio:[75.4,90.0]},
+ {main:[57.0,90.0],pair:[53.1,93.0],trio:[60.9,93.0]},
+ {main:[43.0,90.0],pair:[39.1,93.0],trio:[46.9,93.0]},
+ {main:[28.5,87.0],pair:[24.6,90.0],trio:[32.4,90.0]},
+ {main:[14.0,76.0],pair:[10.1,79.3],trio:[17.9,79.3]},
+ {main:[8.0,56.0],pair:[4.1,59.3],trio:[11.9,59.3]},
+ {main:[18.0,38.0],pair:[14.1,41.3],trio:[21.9,41.3]}
 ];
 
 seats.forEach((xy,i)=>{
@@ -940,6 +957,11 @@ function showSeatModal(i){
 }
 
 function openSeat(i){
+ const eliminated=(state.eliminatedSeats||[])[i];
+ if(eliminated){
+   alert('탈락 자리입니다. 대회 중에는 다시 참가할 수 없습니다.');
+   return;
+ }
  const p=state.players[i];
  if(p){
    if(i===mySeat){
@@ -1087,6 +1109,7 @@ function playerBadge(p,i){
 }
 function render(){
  const players=state.players||Array(10).fill(null);
+ const eliminatedSeats=state.eliminatedSeats||Array(10).fill(null);
  $('#status').textContent=state.status||'';
  const dc=$('#dealerCards');
  let dealerHTML='';
@@ -1102,9 +1125,24 @@ function render(){
  const visibleDealer=(state.dealerHand||[]).filter(c=>!c.hidden);
  $('#dealerScore').textContent=visibleDealer.length?(state.hideHole?`OPEN ${handValue(visibleDealer.slice(0,1))}`:`TOTAL ${handValue(visibleDealer)}`):'';
 
- for(let i=0;i<seatButtons.length;i++) seatButtons[i].classList.toggle('selected',mySeat===i);
+ for(let i=0;i<seatButtons.length;i++){
+   const occupied=!!players[i];
+   const eliminated=!!eliminatedSeats[i];
+   const unavailable=occupied||eliminated;
+   seatButtons[i].classList.toggle('seatOccupied',occupied);
+   seatButtons[i].classList.toggle('seatEliminated',eliminated);
+   seatButtons[i].style.setProperty('display',unavailable?'none':'block','important');
+   seatButtons[i].style.setProperty('visibility',unavailable?'hidden':'visible','important');
+   seatButtons[i].style.pointerEvents=unavailable?'none':'auto';
+   seatButtons[i].classList.remove('selected');
+ }
 
  let html='';
+ for(let i=0;i<eliminatedSeats.length;i++){
+   const e=eliminatedSeats[i]; if(!e)continue;
+   const sx=seats[i][0],sy=seats[i][1];
+   html+=`<div class="eliminatedSeat" style="left:${sx}%;top:${sy+5.7}%">${escHTML(e.name||('SEAT '+(i+1)))}<b>탈락 자리 · 재참가 불가</b></div>`;
+ }
  for(let i=0;i<players.length;i++){
    const p=players[i]; if(!p)continue;
    const sx=seats[i][0],sy=seats[i][1];
