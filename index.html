@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>BLACKJACK BASAN V21</title>
+<title>BLACKJACK BASAN V22 SOUND</title>
 <style>
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;background:#050505;color:#fff;font-family:system-ui,-apple-system,"Noto Sans KR",sans-serif}
@@ -1044,7 +1044,79 @@ socket.on('seatLeft',()=>{
  $('#leaveSeat').style.display='none';
  render();
 });
+
+/* V22 - lightweight casino sound effects (no external audio files) */
+let audioCtx=null, soundUnlocked=false, lastCardSignature='';
+function getAudioCtx(){
+  if(!audioCtx){
+    const AC=window.AudioContext||window.webkitAudioContext;
+    if(!AC)return null;
+    audioCtx=new AC();
+  }
+  return audioCtx;
+}
+function unlockSound(){
+  const ctx=getAudioCtx();
+  if(!ctx)return;
+  if(ctx.state==='suspended')ctx.resume();
+  soundUnlocked=true;
+}
+document.addEventListener('pointerdown',unlockSound,{once:true,passive:true});
+document.addEventListener('touchstart',unlockSound,{once:true,passive:true});
+
+function playChipSound(){
+  if(!soundUnlocked)return;
+  const ctx=getAudioCtx(); if(!ctx)return;
+  const now=ctx.currentTime;
+  [0,0.035].forEach((d,i)=>{
+    const o=ctx.createOscillator(), g=ctx.createGain();
+    o.type='triangle'; o.frequency.setValueAtTime(i?920:680,now+d);
+    o.frequency.exponentialRampToValueAtTime(i?540:390,now+d+0.055);
+    g.gain.setValueAtTime(0.0001,now+d);
+    g.gain.exponentialRampToValueAtTime(0.16,now+d+0.006);
+    g.gain.exponentialRampToValueAtTime(0.0001,now+d+0.075);
+    o.connect(g); g.connect(ctx.destination); o.start(now+d); o.stop(now+d+0.08);
+  });
+}
+function playCardSound(){
+  if(!soundUnlocked)return;
+  const ctx=getAudioCtx(); if(!ctx)return;
+  const now=ctx.currentTime, dur=0.09, n=Math.max(1,Math.floor(ctx.sampleRate*dur));
+  const buf=ctx.createBuffer(1,n,ctx.sampleRate), data=buf.getChannelData(0);
+  for(let i=0;i<n;i++){
+    const t=i/n;
+    data[i]=(Math.random()*2-1)*(1-t)*0.34;
+  }
+  const src=ctx.createBufferSource(), filter=ctx.createBiquadFilter(), g=ctx.createGain();
+  src.buffer=buf; filter.type='bandpass'; filter.frequency.value=1850; filter.Q.value=.7;
+  g.gain.setValueAtTime(0.0001,now);
+  g.gain.exponentialRampToValueAtTime(0.24,now+0.008);
+  g.gain.exponentialRampToValueAtTime(0.0001,now+dur);
+  src.connect(filter); filter.connect(g); g.connect(ctx.destination); src.start(now);
+}
+function cardSignature(s){
+  const dealer=(s.dealerHand||[]).length;
+  let players=0;
+  (s.players||[]).forEach(p=>{
+    if(!p)return;
+    (p.hands||[]).forEach(h=>players+=(h.cards||[]).length);
+  });
+  return dealer+'|'+players;
+}
+function maybePlayDealSound(nextState){
+  const sig=cardSignature(nextState);
+  if(lastCardSignature){
+    const [od,op]=lastCardSignature.split('|').map(Number);
+    const [nd,np]=sig.split('|').map(Number);
+    const added=Math.max(0,(nd-od)+(np-op));
+    if(added>0){
+      for(let i=0;i<Math.min(added,6);i++)setTimeout(playCardSound,i*85);
+    }
+  }
+  lastCardSignature=sig;
+}
 socket.on('state',s=>{
+ maybePlayDealSound(s);
  state=s;
  mySeat=s.mySeat;
  if(mySeat!==null) selected=mySeat;
@@ -1104,6 +1176,8 @@ function setBetMode(mode){
 document.querySelectorAll('.chipBtn').forEach(btn=>{
  btn.onclick=()=>{
    if(mySeat===null)return alert('먼저 빈 좌석에 착석하세요.');
+   unlockSound();
+   playChipSound();
    socket.emit('betAdd',{token,mode:betMode,value:+btn.dataset.v});
  };
 });
@@ -1273,7 +1347,7 @@ if(introScreen && $('#bg')){
   };
   if($('#bg').complete) syncIntroBg(); else $('#bg').addEventListener('load',syncIntroBg,{once:true});
 }
-enterTable?.addEventListener('click',()=>introScreen?.classList.add('hide'));
+enterTable?.addEventListener('click',()=>{unlockSound();introScreen?.classList.add('hide')});
 socket.on('connect',()=>socket.emit('hello',{token}));
 
 setInterval(()=>{
