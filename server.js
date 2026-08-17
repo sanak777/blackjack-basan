@@ -9,11 +9,11 @@ const PORT=process.env.PORT||3000;
 const START=1000000;
 const WIN_TARGET=10000000;
 const MIN_BET=10000;
-const BET_SECONDS=10;
+const BET_SECONDS=15;
 const INSURANCE_SECONDS=10;
 
 app.use(express.static(__dirname));
-app.get('/health',(req,res)=>res.json({ok:true,version:'V29_WAIT_FOR_10'}));
+app.get('/health',(req,res)=>res.json({ok:true,version:'V31_BET15_3TURN_OUT'}));
 
 const G={
  players:Array(10).fill(null),
@@ -402,39 +402,44 @@ function advanceTurn(){
  if(G.turnIndex>=G.turnOrder.length){
    G.status='모든 플레이어 액션 완료 · 딜러 비하인드 오픈';broadcast();revealDealer();return
  }
+
  const [seat,p,h]=current();
  p.lastAction='TURN';
- if(p.connected===false){
-   G.status=`${p.name} 연결 끊김 · 10초 후 자동 STAND`;
-   broadcast();
-   G.turnTimer=setTimeout(()=>{
-     const [seat2,p2,h2]=current();
-     if(seat2!==seat||!p2||!h2||h2.state!=='PLAY')return;
-     p2.inactiveTurns=(p2.inactiveTurns||0)+1;
-     if(p2.inactiveTurns>=3){
-       h2.state='BUST';
-       p2.eliminatedPending=true;
-       p2.lastAction='AUTO OUT';
-       p2.roundResult='3턴 연속 무응답 · 자동 탈락';
-       reserveEliminatedSeat(seat2,p2,'3턴 무응답 자동 탈락');
-       G.players[seat2]=null;
-       G.status=`${p2.name} · 3턴 연속 무응답으로 자동 탈락`;
-       G.turnIndex++;
-       G.activeHandIndex=0;
-       broadcast();
-       setTimeout(advanceTurn,250);
-       return;
-     }
-     h2.state='STAND';
-     p2.lastAction=`AUTO STAND ${p2.inactiveTurns}/3`;
-     G.activeHandIndex++;
-     G.status=`${p2.name} 무응답 ${p2.inactiveTurns}/3 · 자동 STAND`;
+
+ const disconnected=p.connected===false;
+ G.status=disconnected
+   ? `${p.name} 연결 끊김 · 행동시간 10초`
+   : `${p.name} 차례 · 행동시간 10초 · HIT / STAND / DOUBLE / SPLIT`;
+ broadcast();
+
+ G.turnTimer=setTimeout(()=>{
+   const [seat2,p2,h2]=current();
+   if(seat2!==seat||!p2||!h2||h2.state!=='PLAY')return;
+
+   p2.inactiveTurns=(p2.inactiveTurns||0)+1;
+
+   if(p2.inactiveTurns>=3){
+     h2.state='BUST';
+     p2.eliminatedPending=true;
+     p2.lastAction='AUTO OUT';
+     p2.roundResult='3턴 연속 무응답 · 자동 탈락';
+     reserveEliminatedSeat(seat2,p2,'3턴 무응답 자동 탈락');
+     G.players[seat2]=null;
+     G.status=`${p2.name} · 3턴 연속 무응답으로 자동 탈락`;
+     G.turnIndex++;
+     G.activeHandIndex=0;
      broadcast();
      setTimeout(advanceTurn,250);
-   },10000);
-   return;
- }
- G.status=`${p.name} 차례 · HIT / STAND / DOUBLE / SPLIT`;broadcast();
+     return;
+   }
+
+   h2.state='STAND';
+   p2.lastAction=`AUTO STAND ${p2.inactiveTurns}/3`;
+   G.activeHandIndex++;
+   G.status=`${p2.name} 무응답 ${p2.inactiveTurns}/3 · 자동 STAND`;
+   broadcast();
+   setTimeout(advanceTurn,250);
+ },10000);
 }
 async function revealDealer(){
  G.settling=true;G.hideHole=false;G.status='딜러 비하인드 카드 오픈';broadcast();await sleep(650);
