@@ -15,7 +15,7 @@ const BET_SECONDS=15;
 const INSURANCE_SECONDS=10;
 
 app.use(express.static(__dirname));
-app.get('/health',(req,res)=>res.json({ok:true,version:'V39_PERSONAL_RESULT_5S'}));
+app.get('/health',(req,res)=>res.json({ok:true,version:'V40_SPLIT_ACES_RULE'}));
 
 const G={
  players:Array(10).fill(null),
@@ -67,7 +67,7 @@ function canSplit(p,h){
  const f=['J','Q','K'],ok=h.cards[0].r===h.cards[1].r||(f.includes(h.cards[0].r)&&f.includes(h.cards[1].r));
  return ok&&p.bank>=h.bet;
 }
-function canDouble(p,h){return !!(p&&h&&h.cards.length===2&&!h.doubled&&p.bank>=h.bet)}
+function canDouble(p,h){return !!(p&&h&&h.cards.length===2&&!h.doubled&&!h.splitAces&&p.bank>=h.bet)}
 function byToken(token){return G.players.findIndex(p=>p&&p.token===token)}
 function aliveEntries(){return G.players.map((p,i)=>p?{p,i}:null).filter(Boolean)}
 function alivePlayers(){return G.players.filter(Boolean)}
@@ -730,6 +730,15 @@ io.on('connection',socket=>{
  socket.on('turnAction',({token,action})=>{
    const i=byToken(String(token||'')),[seat,p,h]=current();
    if(i<0||i!==seat||!p||!h||h.state!=='PLAY'||G.dealing||G.settling||G.insuranceOpen)return;
+   // A-A 스플릿 핸드는 카드 1장 지급 후 종료이므로 추가 액션 금지.
+   if(h.splitAces && (action==='hit'||action==='double'||action==='split')){
+     h.state='STAND';
+     p.lastAction='A-A SPLIT · 자동 STAND';
+     G.status=`${p.name} A-A SPLIT · 추가 HIT/DOUBLE 불가`;
+     broadcast();
+     return setTimeout(advanceTurn,180);
+   }
+
    stopTurnTimer();
    p.inactiveTurns=0;
 
@@ -767,14 +776,33 @@ io.on('connection',socket=>{
      if(p.roundStartBank===null||p.roundStartBank===undefined)p.roundStartBank=p.bank;
      p.roundStake=(p.roundStake||0)+h.bet;
      p.bank-=h.bet;const [c1,c2]=h.cards,bet=h.bet;
-     const h1={cards:[c1,G.deck.pop()],bet,state:'PLAY',doubled:false,split:true,result:''};
-     const h2={cards:[c2,G.deck.pop()],bet,state:'PLAY',doubled:false,split:true,result:''};
-     for(const x of [h1,h2]){
-       const v=handValue(x.cards);
-       if(v>21){x.state='BUST';x.result='BUST'}
-       else if(v===21)x.state='STAND'
+
+     // A-A 스플릿은 각 A에 딱 1장씩만 지급하고 즉시 종료.
+     // 스플릿 A 핸드에는 HIT / DOUBLE을 허용하지 않는다.
+     const splitAces=(c1.r==='A'&&c2.r==='A');
+     const h1={cards:[c1,G.deck.pop()],bet,state:splitAces?'STAND':'PLAY',doubled:false,split:true,splitAces,result:''};
+     const h2={cards:[c2,G.deck.pop()],bet,state:splitAces?'STAND':'PLAY',doubled:false,split:true,splitAces,result:''};
+
+     if(!splitAces){
+       for(const x of [h1,h2]){
+         const v=handValue(x.cards);
+         if(v>21){x.state='BUST';x.result='BUST'}
+         else if(v===21)x.state='STAND'
+       }
      }
-     p.hands.splice(G.activeHandIndex,1,h1,h2);broadcast();
+
+     p.hands.splice(G.activeHandIndex,1,h1,h2);
+
+     if(splitAces){
+       p.lastAction='A-A SPLIT · 1장씩 지급 · 자동 STAND';
+       G.status=`${p.name} A-A SPLIT · 각 핸드 1장 지급 후 자동 STAND`;
+       broadcast();
+       // 두 핸드 모두 이미 STAND이므로 다음 플레이어로 바로 진행.
+       G.activeHandIndex+=2;
+       return setTimeout(advanceTurn,450);
+     }
+
+     broadcast();
      if(p.hands[G.activeHandIndex].state!=='PLAY'){G.activeHandIndex++;setTimeout(advanceTurn,220)}
    }
  });
