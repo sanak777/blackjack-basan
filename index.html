@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>BLACKJACK BASAN V38 SIDE LABEL CLEAR</title>
+<title>BLACKJACK BASAN V39 PERSONAL RESULT</title>
 <style>
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;background:#050505;color:#fff;font-family:system-ui,-apple-system,"Noto Sans KR",sans-serif}
@@ -883,9 +883,95 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
 #adminMsg{font-size:11px;margin-top:7px;color:#d7c79d}
 #adminCloseBtn{width:100%;margin-top:8px}
 
+
+/* V39 개인 라운드 결과 팝업 */
+#personalResultOverlay{
+  display:none;position:fixed;inset:0;z-index:12000;
+  background:rgba(0,0,0,.54);
+  align-items:center;justify-content:center;
+  padding:18px;
+}
+#personalResultOverlay.show{display:flex}
+#personalResultCard{
+  width:min(560px,92vw);
+  border-radius:20px;
+  background:
+    radial-gradient(circle at 50% 0%,rgba(255,207,73,.12),transparent 42%),
+    linear-gradient(180deg,rgba(12,12,12,.98),rgba(2,2,2,.98));
+  border:2px solid #d4af45;
+  box-shadow:0 0 12px #000,0 0 28px rgba(255,196,55,.42);
+  color:#fff;text-align:center;overflow:hidden;
+}
+#personalResultCard.lose{
+  border-color:#9da1aa;
+  box-shadow:0 0 12px #000,0 0 24px rgba(190,195,205,.28);
+}
+#personalResultTop{padding:21px 18px 8px}
+#personalResultIcon{font-size:38px;line-height:1}
+#personalResultTitle{
+  margin-top:5px;font-weight:1000;font-size:clamp(28px,7vw,48px);
+  letter-spacing:-.04em;color:#ffd65b;
+  text-shadow:0 2px 2px #000,0 0 12px rgba(255,199,55,.52)
+}
+#personalResultCard.lose #personalResultTitle{color:#f0f1f4;text-shadow:0 2px 2px #000}
+#personalResultBrand{margin-top:3px;color:#f7dda0;font-weight:900;letter-spacing:.16em}
+#personalResultNumbers{
+  margin:14px 16px 10px;padding:14px 10px;
+  border:1px solid rgba(220,185,82,.65);border-radius:13px;
+  display:grid;grid-template-columns:1fr 1fr;gap:0;
+  background:rgba(0,0,0,.42)
+}
+.resultNumBox:first-child{border-right:1px solid rgba(220,185,82,.45)}
+.resultLabel{font-size:13px;color:#ddd;font-weight:900}
+.resultMoney{margin-top:7px;font-size:clamp(20px,5.8vw,32px);font-weight:1000;color:#fff}
+#personalResultAmount.win{color:#ffd455}
+#personalResultAmount.lose{color:#ff626a}
+#personalResultAmount.push{color:#e6e6e6}
+#personalResultSummary{padding:5px 16px 16px}
+#personalResultSummaryLabel{font-size:13px;color:#d7c27e;font-weight:900}
+#personalResultSummaryMoney{
+  margin-top:3px;font-size:clamp(30px,8vw,52px);font-weight:1000;color:#ffd455;
+  text-shadow:0 0 12px rgba(255,194,48,.32)
+}
+#personalResultCard.lose #personalResultSummaryMoney{color:#ff626a;text-shadow:none}
+#personalResultBottom{
+  border-top:1px solid rgba(220,185,82,.45);
+  padding:12px 10px;background:rgba(0,0,0,.42);
+  color:#eee;font-size:14px;font-weight:800
+}
+#personalResultCountdown{color:#ffd455;font-size:21px;font-weight:1000;margin-right:4px}
+
 </style>
 </head>
 <body>
+
+<div id="personalResultOverlay">
+  <div id="personalResultCard">
+    <div id="personalResultTop">
+      <div id="personalResultIcon">👑</div>
+      <div id="personalResultTitle">승리했습니다!</div>
+      <div id="personalResultBrand">바카라산악회</div>
+    </div>
+    <div id="personalResultNumbers">
+      <div class="resultNumBox">
+        <div class="resultLabel">베팅 금액</div>
+        <div id="personalResultBet" class="resultMoney">₩0</div>
+      </div>
+      <div class="resultNumBox">
+        <div id="personalResultSideLabel" class="resultLabel">승리 금액</div>
+        <div id="personalResultAmount" class="resultMoney win">₩0</div>
+      </div>
+    </div>
+    <div id="personalResultSummary">
+      <div id="personalResultSummaryLabel">이번 라운드 순이익</div>
+      <div id="personalResultSummaryMoney">+₩0</div>
+    </div>
+    <div id="personalResultBottom">
+      <span id="personalResultCountdown">5</span>초 후 개인 베팅시간 15초가 시작됩니다
+    </div>
+  </div>
+</div>
+
 <div id="soundVersion">V38 · SIDE LABEL CLEAR</div>
 
 <div id="introScreen" aria-label="BLACKJACK BASAN 입장 화면">
@@ -1223,8 +1309,89 @@ function syncAdminVisibility(s){
   }
 }
 
+
+let personalResultTimer=null;
+let shownPersonalResultKey='';
+
+function showPersonalRoundResult(s){
+  const overlay=$('#personalResultOverlay');
+  if(!overlay)return;
+
+  const seat=s?.mySeat;
+  const p=(seat!==null&&seat!==undefined)?s?.players?.[seat]:null;
+  const until=Number(s?.resultShowUntil||0);
+
+  if(!p||!p.roundResultKind||until<=Date.now()){
+    overlay.classList.remove('show');
+    if(personalResultTimer){clearInterval(personalResultTimer);personalResultTimer=null}
+    return;
+  }
+
+  const key=`${s.roundNo}:${seat}:${p.roundResultKind}:${p.roundResultAmount}:${p.roundStake}`;
+  const kind=p.roundResultKind;
+  const bet=Number(p.roundStake||0);
+  const amount=Number(p.roundResultAmount||0);
+
+  const card=$('#personalResultCard');
+  const icon=$('#personalResultIcon');
+  const title=$('#personalResultTitle');
+  const sideLabel=$('#personalResultSideLabel');
+  const amountEl=$('#personalResultAmount');
+  const summaryLabel=$('#personalResultSummaryLabel');
+  const summaryMoney=$('#personalResultSummaryMoney');
+
+  card.classList.toggle('lose',kind==='LOSE');
+
+  if(kind==='WIN'){
+    icon.textContent='👑';
+    title.textContent='승리했습니다!';
+    sideLabel.textContent='승리 금액';
+    amountEl.textContent=money(amount);
+    amountEl.className='resultMoney win';
+    summaryLabel.textContent='이번 라운드 순이익';
+    summaryMoney.textContent='+'+money(amount);
+  }else if(kind==='LOSE'){
+    icon.textContent='💔';
+    title.textContent='아쉽게 졌습니다';
+    sideLabel.textContent='손실 금액';
+    amountEl.textContent=money(amount);
+    amountEl.className='resultMoney lose';
+    summaryLabel.textContent='이번 라운드 손실';
+    summaryMoney.textContent='-'+money(amount);
+  }else{
+    icon.textContent='🤝';
+    title.textContent='무승부입니다';
+    sideLabel.textContent='결과 금액';
+    amountEl.textContent=money(0);
+    amountEl.className='resultMoney push';
+    summaryLabel.textContent='이번 라운드 결과';
+    summaryMoney.textContent=money(0);
+  }
+
+  $('#personalResultBet').textContent=money(bet);
+  overlay.classList.add('show');
+
+  const updateCountdown=()=>{
+    const sec=Math.max(0,Math.ceil((until-Date.now())/1000));
+    const el=$('#personalResultCountdown');
+    if(el)el.textContent=sec;
+    if(sec<=0){
+      overlay.classList.remove('show');
+      if(personalResultTimer){clearInterval(personalResultTimer);personalResultTimer=null}
+    }
+  };
+
+  updateCountdown();
+  if(shownPersonalResultKey!==key){
+    shownPersonalResultKey=key;
+    if(personalResultTimer)clearInterval(personalResultTimer);
+    personalResultTimer=setInterval(updateCountdown,200);
+  }
+}
+
 socket.on('state',s=>{
  syncAdminVisibility(s);
+ showPersonalRoundResult(s);
  maybePlayDealSound(s);
  state=s;
  mySeat=s.mySeat;

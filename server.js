@@ -15,7 +15,7 @@ const BET_SECONDS=15;
 const INSURANCE_SECONDS=10;
 
 app.use(express.static(__dirname));
-app.get('/health',(req,res)=>res.json({ok:true,version:'V37_ALLIN_START_FIX'}));
+app.get('/health',(req,res)=>res.json({ok:true,version:'V39_PERSONAL_RESULT_5S'}));
 
 const G={
  players:Array(10).fill(null),
@@ -25,7 +25,8 @@ const G={
  roundNo:1,dealerHand:[],deck:[],turnOrder:[],turnIndex:0,activeHandIndex:0,
  status:'10명 모이면 시작합니다 · 0 / 10',
  countdown:null,betTimer:null,turnTimer:null,insuranceTimer:null,hideHole:false,
- insuranceOpen:false,insuranceDeadline:null
+ insuranceOpen:false,insuranceDeadline:null,
+ resultShowUntil:0
 };
 
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
@@ -81,7 +82,7 @@ function stopTurnTimer(){
 }
 function stopInsuranceTimer(){
  if(G.insuranceTimer){clearInterval(G.insuranceTimer);G.insuranceTimer=null}
- G.insuranceDeadline=null;
+ G.insuranceDeadline=null;G.resultShowUntil=0;
 }
 function reserveEliminatedSeat(i,p,reason='탈락'){
  if(i<0||i>9)return;
@@ -124,6 +125,7 @@ function snapshotFor(socket){
    insuranceOpen:G.insuranceOpen,
    insuranceDeadline:G.insuranceDeadline,
    insuranceSeconds:INSURANCE_SECONDS,
+   resultShowUntil:G.resultShowUntil||0,
    mySeat,serverNow:Date.now(),betSeconds:BET_SECONDS,
    adminActive:!!activeAdminSocketId,
    isAdmin:activeAdminSocketId===socket.id
@@ -273,6 +275,8 @@ function confirmPlayerBet(p,auto=false){
    p.bet.main=MIN_BET;p.betLast.main=MIN_BET;p.history.push({mode:'main',v:MIN_BET});total=MIN_BET;
  }
  if(total>p.bank)return false;
+ if(p.roundStartBank===null||p.roundStartBank===undefined)p.roundStartBank=p.bank;
+ p.roundStake=(p.roundStake||0)+total;
  p.bank-=total;p.confirmed=true;p.autoConfirmed=!!auto;p.betDeadline=null;
  p.betState=auto?'AUTO_CONFIRMED':'CONFIRMED';
  return true;
@@ -537,6 +541,12 @@ function settle(){
      p.lastAction='ROUND DONE';
    }
    p.roundResult=texts.join(' · ');
+
+   // 라운드 시작 직전 보유금 대비 최종 보유금 = 정확한 개인 순손익.
+   const startBank=(p.roundStartBank===null||p.roundStartBank===undefined)?p.bank:p.roundStartBank;
+   p.roundNet=Math.round(p.bank-startBank);
+   p.roundResultAmount=Math.abs(p.roundNet);
+   p.roundResultKind=p.roundNet>0?'WIN':(p.roundNet<0?'LOSE':'PUSH');
  }
  G.settling=false;
 
@@ -545,12 +555,14 @@ function settle(){
  if(checkTargetWinner())return;
 
  const brokeCount=alivePlayers().filter(p=>p.bank<MIN_BET).length;
- G.status=`ROUND ${G.roundNo} 정산 완료${brokeCount?` · 잔액 부족 탈락 예정 ${brokeCount}명`:''} · 다음 라운드 준비`;
- broadcast();setTimeout(nextRound,4200);
+ G.resultShowUntil=Date.now()+5000;
+ G.status=`ROUND ${G.roundNo} 개인 결과 확인 · 5초 후 다음 베팅`;
+ broadcast();setTimeout(nextRound,5000);
 }
 function nextRound(){
  stopTurnTimer();stopInsuranceTimer();
  G.insuranceOpen=false;
+ G.resultShowUntil=0;
  G.gameStarted=false;G.dealing=false;G.settling=false;G.dealerHand=[];G.hideHole=false;
  G.turnOrder=[];G.turnIndex=0;G.activeHandIndex=0;G.roundNo++;
 
@@ -590,6 +602,7 @@ function nextRound(){
    p.confirmed=false;p.autoConfirmed=false;p.betDeadline=null;p.betState='WAITING_BET';
    p.roundResult='';p.lastAction='WAIT';p.eliminatedPending=false;
    p.insuranceBet=0;p.insuranceDecision=null;
+   p.roundStartBank=null;p.roundStake=0;p.roundNet=0;p.roundResultKind='';p.roundResultAmount=0;
  }
  updateWaitingStatus();broadcast();
  armBettingClock();
@@ -630,7 +643,8 @@ io.on('connection',socket=>{
      token,socketId:socket.id,connected:true,disconnectedAt:null,inactiveTurns:0,name,bank:START,
      bet:{main:0,pair:0,trio:0},betLast:{main:0,pair:0,trio:0},history:[],
      confirmed:false,autoConfirmed:false,betDeadline:null,betState:'WAITING_BET',
-     hands:[],roundResult:'',lastAction:'WAIT',eliminatedPending:false,insuranceBet:0,insuranceDecision:null
+     hands:[],roundResult:'',lastAction:'WAIT',eliminatedPending:false,insuranceBet:0,insuranceDecision:null,
+     roundStartBank:null,roundStake:0,roundNet:0,roundResultKind:'',roundResultAmount:0
    };
    socket.emit('seatOk',{seat});updateWaitingStatus();broadcast();armBettingClock();
  });
@@ -699,6 +713,8 @@ io.on('connection',socket=>{
    if(take){
      if(amount<=0)return socket.emit('actionError','MAIN 베팅이 없어 인슈어런스를 선택할 수 없습니다.');
      if(p.bank<amount)return socket.emit('actionError','인슈어런스 베팅에 필요한 보유금이 부족합니다.');
+     if(p.roundStartBank===null||p.roundStartBank===undefined)p.roundStartBank=p.bank;
+     p.roundStake=(p.roundStake||0)+amount;
      p.bank-=amount;
      p.insuranceBet=amount;
      p.insuranceDecision=true;
@@ -738,6 +754,8 @@ io.on('connection',socket=>{
      G.activeHandIndex++;G.status=`${p.name} STAND 완료`;broadcast();setTimeout(advanceTurn,200);
    }else if(action==='double'){
      if(!canDouble(p,h))return;
+     if(p.roundStartBank===null||p.roundStartBank===undefined)p.roundStartBank=p.bank;
+     p.roundStake=(p.roundStake||0)+h.bet;
      p.bank-=h.bet;h.bet*=2;h.doubled=true;h.cards.push(G.deck.pop());
      const v=handValue(h.cards);
      if(v>21){h.state='BUST';h.result='BUST';p.lastAction='DOUBLE · BUST'}
@@ -746,6 +764,8 @@ io.on('connection',socket=>{
    }else if(action==='split'){
      if(!canSplit(p,h))return;
      p.lastAction='SPLIT';
+     if(p.roundStartBank===null||p.roundStartBank===undefined)p.roundStartBank=p.bank;
+     p.roundStake=(p.roundStake||0)+h.bet;
      p.bank-=h.bet;const [c1,c2]=h.cards,bet=h.bet;
      const h1={cards:[c1,G.deck.pop()],bet,state:'PLAY',doubled:false,split:true,result:''};
      const h2={cards:[c2,G.deck.pop()],bet,state:'PLAY',doubled:false,split:true,result:''};
