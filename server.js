@@ -15,7 +15,7 @@ const BET_SECONDS=15;
 const INSURANCE_SECONDS=10;
 
 app.use(express.static(__dirname));
-app.get('/health',(req,res)=>res.json({ok:true,version:'V36_ADMIN_PRIVATE'}));
+app.get('/health',(req,res)=>res.json({ok:true,version:'V37_ALLIN_START_FIX'}));
 
 const G={
  players:Array(10).fill(null),
@@ -233,13 +233,25 @@ function adminStartGame(){
 
  G.tournamentStarted=true;
  G.gameStarted=false;
- G.status=`방장 START · 참가자 ${alive.length}명 · 개인 베팅 15초`;
+
+ // 중요:
+ // START 전에 이미 '베팅 완료'한 사람은 금액이 이미 1회 차감된 상태다.
+ // confirmed를 풀어버리면 같은 금액이 다시 차감되어 올인/고액 베터가 탈락하는 버그가 생긴다.
+ // 따라서 완료된 베팅은 그대로 인정하고, 미완료자에게만 15초 타이머를 건다.
+ let done=0;
  for(const p of alive){
-   p.confirmed=false;
-   p.autoConfirmed=false;
-   p.betDeadline=null;
-   p.betState=(p.bet.main+p.bet.pair+p.bet.trio)>0?'BETTING':'WAITING_BET';
+   if(p.confirmed){
+     done++;
+     p.betDeadline=null;
+     p.betState=p.autoConfirmed?'AUTO_CONFIRMED':'CONFIRMED';
+   }else{
+     p.autoConfirmed=false;
+     p.betDeadline=null;
+     p.betState=(p.bet.main+p.bet.pair+p.bet.trio)>0?'BETTING':'WAITING_BET';
+   }
  }
+
+ G.status=`방장 START · 참가자 ${alive.length}명 · 베팅 완료 ${done}/${alive.length}`;
  broadcast();
  armBettingClock();
  return {ok:true};
@@ -291,7 +303,9 @@ function armBettingClock(){
    const now2=Date.now();
    let changed=false;
    for(let i=0;i<G.players.length;i++){
-     const p=G.players[i];if(!p||p.confirmed||!p.betDeadline)continue;
+     const p=G.players[i];
+     // 이미 베팅 확정된 플레이어(올인 포함)는 재확정/재차감 금지.
+     if(!p||p.confirmed||!p.betDeadline)continue;
      if(now2>=p.betDeadline){
        if(confirmPlayerBet(p,true)){changed=true}
        else{
