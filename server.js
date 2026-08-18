@@ -7,6 +7,7 @@ const server=http.createServer(app);
 const io=new Server(server,{pingInterval:12000,pingTimeout:25000});
 const PORT=process.env.PORT||3000;
 const ADMIN_PASSWORD=String(process.env.ADMIN_PASSWORD||'9981');
+let activeAdminSocketId=null;
 const START=1000000;
 const WIN_TARGET=10000000;
 const MIN_BET=10000;
@@ -14,7 +15,7 @@ const BET_SECONDS=15;
 const INSURANCE_SECONDS=10;
 
 app.use(express.static(__dirname));
-app.get('/health',(req,res)=>res.json({ok:true,version:'V33_ADMIN_STABLE'}));
+app.get('/health',(req,res)=>res.json({ok:true,version:'V36_ADMIN_PRIVATE'}));
 
 const G={
  players:Array(10).fill(null),
@@ -123,7 +124,9 @@ function snapshotFor(socket){
    insuranceOpen:G.insuranceOpen,
    insuranceDeadline:G.insuranceDeadline,
    insuranceSeconds:INSURANCE_SECONDS,
-   mySeat,serverNow:Date.now(),betSeconds:BET_SECONDS
+   mySeat,serverNow:Date.now(),betSeconds:BET_SECONDS,
+   adminActive:!!activeAdminSocketId,
+   isAdmin:activeAdminSocketId===socket.id
  };
 }
 function broadcast(){
@@ -751,8 +754,13 @@ io.on('connection',socket=>{
    if(String(password||'')!==ADMIN_PASSWORD){
      return socket.emit('adminLoginResult',{ok:false,msg:'비밀번호가 틀렸습니다.'});
    }
+   if(activeAdminSocketId && activeAdminSocketId!==socket.id){
+     return socket.emit('adminLoginResult',{ok:false,msg:'이미 방장이 접속해 있습니다.'});
+   }
+   activeAdminSocketId=socket.id;
    socket.data.isAdmin=true;
    socket.emit('adminLoginResult',{ok:true});
+   broadcast();
  });
 
  socket.on('adminStartGame',()=>{
@@ -766,6 +774,11 @@ io.on('connection',socket=>{
    adminStopGame();
  });
  socket.on('disconnect',()=>{
+   if(activeAdminSocketId===socket.id){
+     activeAdminSocketId=null;
+     socket.data.isAdmin=false;
+     setTimeout(()=>broadcast(),0);
+   }
    const i=G.players.findIndex(p=>p&&p.socketId===socket.id);
    if(i>=0){
      const p=G.players[i],token=p.token;

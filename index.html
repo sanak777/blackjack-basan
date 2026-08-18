@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>BLACKJACK BASAN V35 ADMIN SAFE UI</title>
+<title>BLACKJACK BASAN V36 ADMIN PRIVATE</title>
 <style>
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;background:#050505;color:#fff;font-family:system-ui,-apple-system,"Noto Sans KR",sans-serif}
@@ -879,7 +879,7 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
 </style>
 </head>
 <body>
-<div id="soundVersion">V35 · ADMIN SAFE UI</div>
+<div id="soundVersion">V36 · ADMIN PRIVATE</div>
 
 <div id="introScreen" aria-label="BLACKJACK BASAN 입장 화면">
   <div class="introCard">
@@ -1192,7 +1192,32 @@ function maybePlayDealSound(nextState){
   }
   lastCardSignature=sig;
 }
+
+function syncAdminVisibility(s){
+  const btn=$('#adminOpenBtn');
+  const popup=$('#adminPopup');
+  if(!btn)return;
+
+  // Before a host logs in: ADMIN is visible so the host can authenticate.
+  // After a host logs in: only that host's browser keeps the ADMIN button.
+  if(s?.adminActive && !s?.isAdmin){
+    btn.style.display='none';
+    popup?.classList.remove('show');
+    return;
+  }
+
+  btn.style.display='';
+  if(s?.isAdmin){
+    adminLoggedIn=true;
+    btn.textContent='ADMIN ✓';
+    btn.classList.add('adminOn');
+    const row=$('#adminLoginRow'); if(row)row.style.display='none';
+    $('#adminControls')?.classList.add('show');
+  }
+}
+
 socket.on('state',s=>{
+ syncAdminVisibility(s);
  maybePlayDealSound(s);
  state=s;
  mySeat=s.mySeat;
@@ -1458,7 +1483,7 @@ socket.on('adminLoginResult',r=>{
     openBtn.classList.add('adminOn');
   }
   const m=$('#adminMsg');
-  if(m)m.textContent='방장 접속 완료 · 이 기기에서만 START / 종료 가능';
+  if(m)m.textContent='방장 접속 완료 · 다른 플레이어 화면에서는 ADMIN 숨김';
 });
 
 $('#adminStartBtn')?.addEventListener('click',()=>{
