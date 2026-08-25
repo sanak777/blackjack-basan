@@ -487,7 +487,7 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
 }
 #doubleBtn{background:linear-gradient(#b57b28,#7d4f13)}
 #splitBtn{background:linear-gradient(#6d4eb0,#452c78)}
-#surrenderBtn{background:linear-gradient(#58606b,#2f353d)}
+#surrenderBtn{background:linear-gradient(#58606b,#2f353d);font-size:clamp(8px,1.25vw,13px);white-space:normal;line-height:1.15}
 .turnBtn:disabled{
  opacity:.32;
  filter:grayscale(.5)
@@ -1720,6 +1720,8 @@ function render(){
  $('#doubleBtn').disabled=!(myTurn&&state.canDouble);
  $('#splitBtn').disabled=!(myTurn&&state.canSplit);
  $('#surrenderBtn').disabled=!(myTurn&&state.canSurrender);
+ const cashOffer=myTurn?state.cashOutOffer:null;
+ $('#surrenderBtn').textContent=cashOffer?`인출 ${money(cashOffer.amount)} (${cashOffer.percent}%)`:'인출';
  $('#turnInfo').textContent=myTurn&&h?`${p.name} · HAND ${state.activeHandIndex+1}/${p.hands.length} · 현재 ${handValue(h.cards)}`:(state.turnSeat!==null&&players[state.turnSeat]?`${players[state.turnSeat].name} 차례`:'');
 }
 const introScreen=$('#introScreen');

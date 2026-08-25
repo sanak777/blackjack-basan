@@ -86,7 +86,46 @@ function canSplit(p,h){
  return ok&&p.bank>=h.bet;
 }
 function canDouble(p,h){return !!(p&&h&&h.cards.length===2&&!h.doubled&&!h.splitAces&&p.bank>=h.bet)}
-function canSurrender(p,h){return !!(p&&h&&h.cards.length===2&&!h.split&&!h.doubled&&h.state==='PLAY')}
+function canCashOut(p,h){return !!(p&&h&&h.state==='PLAY'&&handValue(h.cards)<=21)}
+function cashOutOffer(h){
+ if(!canCashOut({},h)||!G.dealerHand[0])return null;
+ const playerTotal=handValue(h.cards);
+ // The real hole card must not affect the offer. Put it back into the unknown
+ // rank pool so the quote only uses information visible to the player.
+ const unknown=[...G.deck];
+ if(G.dealerHand[1])unknown.push(G.dealerHand[1]);
+ const ranks=['A','2','3','4','5','6','7','8','9','10','J','Q','K'];
+ const counts=ranks.map(r=>unknown.filter(c=>c.r===r).length);
+ const memo=new Map();
+ function dealerDist(total,soft,cs,left){
+   while(total>21&&soft>0){total-=10;soft--}
+   if(total>=17)return total>21?{bust:1}:{[total]:1};
+   const key=`${total}|${soft}|${left}|${cs.join(',')}`;
+   if(memo.has(key))return memo.get(key);
+   const out={};
+   for(let i=0;i<cs.length;i++){
+     if(!cs[i])continue;
+     const next=cs.slice();next[i]--;
+     const rank=ranks[i],value=rank==='A'?11:(['10','J','Q','K'].includes(rank)?10:Number(rank));
+     const d=dealerDist(total+value,soft+(rank==='A'?1:0),next,left-1);
+     const weight=cs[i]/left;
+     for(const [k,v] of Object.entries(d))out[k]=(out[k]||0)+v*weight;
+   }
+   memo.set(key,out);return out;
+ }
+ const up=G.dealerHand[0].r;
+ const upValue=up==='A'?11:(['10','J','Q','K'].includes(up)?10:Number(up));
+ const dist=dealerDist(upValue,up==='A'?1:0,counts,unknown.length);
+ let win=dist.bust||0,push=0;
+ for(let d=17;d<=21;d++){
+   const prob=dist[d]||0;
+   if(playerTotal>d)win+=prob;
+   else if(playerTotal===d)push+=prob;
+ }
+ const fairReturn=h.bet*(2*win+push);
+ const amount=Math.max(0,Math.min(h.bet*2,Math.floor(fairReturn/100)*100));
+ return {amount,percent:Math.round(amount/h.bet*100),playerTotal};
+}
 function byToken(token){return G.players.findIndex(p=>p&&p.token===token)}
 function aliveEntries(){return G.players.map((p,i)=>p?{p,i}:null).filter(Boolean)}
 function alivePlayers(){return G.players.filter(Boolean)}
@@ -141,7 +180,8 @@ function snapshotFor(socket){
    tournamentStarted:G.tournamentStarted,tournamentOver:G.tournamentOver,winnerName:G.winnerName,
    roundNo:G.roundNo,status:G.status,turnSeat,activeHandIndex:G.activeHandIndex,
    canSplit:turnSeat===mySeat&&canSplit(p,h),canDouble:turnSeat===mySeat&&canDouble(p,h),
-   canSurrender:turnSeat===mySeat&&canSurrender(p,h),
+   canSurrender:turnSeat===mySeat&&canCashOut(p,h),
+   cashOutOffer:turnSeat===mySeat?cashOutOffer(h):null,
    insuranceOpen:G.insuranceOpen,
    insuranceDeadline:G.insuranceDeadline,
    insuranceSeconds:INSURANCE_SECONDS,
@@ -541,7 +581,7 @@ function settle(){
    }
    for(let i=0;i<p.hands.length;i++){
      const h=p.hands[i],v=handValue(h.cards);let ret=0,res='';
-     if(h.state==='SURRENDER'||h.result==='인출')res='인출';
+     if(h.state==='CASHOUT'||h.result==='인출')res=`인출 ${moneySafe(h.cashOutAmount)}`;
      else if(v>21)res='LOSE';
      else if(natural(h)&&dbj){ret=h.bet;res='PUSH'}
      else if(natural(h)&&!dbj){ret=h.bet*2.5;res='BLACKJACK'}
@@ -806,12 +846,15 @@ io.on('connection',socket=>{
      h.state='STAND';p.lastAction='STAND';
      G.activeHandIndex++;G.status=`${p.name} STAND 완료`;broadcast();setTimeout(advanceTurn,200);
    }else if(action==='surrender'){
-     if(!canSurrender(p,h))return;
-     const refund=Math.floor(h.bet/2);
-     p.bank+=refund;
-     h.state='SURRENDER';h.result='인출';
+     if(!canCashOut(p,h))return;
+     const offer=cashOutOffer(h);
+     if(!offer)return;
+     p.bank+=offer.amount;
+     h.cashOutAmount=offer.amount;
+     h.cashOutPercent=offer.percent;
+     h.state='CASHOUT';h.result='인출';
      p.lastAction='인출';
-     G.activeHandIndex++;G.status=`${p.name} 인출 · 베팅금 절반 ${moneySafe(refund)} 반환`;
+     G.activeHandIndex++;G.status=`${p.name} 인출 · ${offer.playerTotal}점 · ${offer.percent}% · ${moneySafe(offer.amount)} 정산`;
      broadcast();setTimeout(advanceTurn,300);
    }else if(action==='double'){
      if(!canDouble(p,h))return;
