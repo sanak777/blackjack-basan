@@ -1138,6 +1138,24 @@ let state={players:Array(10).fill(null),eliminatedSeats:Array(10).fill(null),dea
 let selected=null,pending=null,selectedChipValue=0;
 let dealerHoleWasHidden=false;
 let previousDealerCardCount=0;
+const countdownAudio=new Audio('blackjack-15sec-countdown.mp3');
+countdownAudio.preload='auto';
+let countdownSoundActive=false;
+function syncCountdownSound(seconds,active){
+  if(active&&seconds>0){
+    if(!countdownSoundActive){
+      countdownSoundActive=true;
+      countdownAudio.currentTime=Math.max(0,15-seconds);
+      countdownAudio.play().catch(()=>{});
+    }
+    return;
+  }
+  if(countdownSoundActive){
+    countdownAudio.pause();
+    countdownAudio.currentTime=0;
+    countdownSoundActive=false;
+  }
+}
 let token=localStorage.getItem('blackjack_basan_token');
 if(!token){
   token=(crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random().toString(36).slice(2));
@@ -1567,6 +1585,7 @@ function render(){
  if(topTimer){
    const title=topTimer.querySelector('.timerTitle'),number=topTimer.querySelector('.timerNumber'),unit=topTimer.querySelector('.timerUnit');
    const pendingSeconds=Math.max(0,...players.filter(x=>x&&!x.confirmed).map(x=>betSecondsLeft(x)));
+   syncCountdownSound(pendingSeconds,state.tournamentStarted&&!state.gameStarted&&!state.tournamentOver);
    if(state.tournamentOver){title.textContent='대회 종료';number.textContent='END';unit.textContent='';}
    else if(state.gameStarted){title.textContent='게임 진행 중';number.textContent='PLAY';unit.textContent='';}
    else if(state.tournamentStarted&&pendingSeconds>0){title.textContent='베팅 마감까지';number.textContent=String(pendingSeconds);unit.textContent='초';}
