@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>BLACKJACK BASAN V40 SPLIT ACES RULE</title>
+<title>BLACKJACK BASAN V42 CORRECT DEAL ORDER</title>
 <style>
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;background:#050505;color:#fff;font-family:system-ui,-apple-system,"Noto Sans KR",sans-serif}
@@ -882,6 +882,82 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
 #adminStopBtn{background:#5a1717;color:#fff0f0;border:1px solid #c84d4d}
 #adminMsg{font-size:11px;margin-top:7px;color:#d7c79d}
 #adminCloseBtn{width:100%;margin-top:8px}
+
+
+/* V41 - mobile readability (normal mobile + desktop-site mode) */
+@media (hover:none) and (pointer:coarse){
+  html,body{min-height:100%;overscroll-behavior-x:none}
+  body{justify-content:flex-start}
+  #app{
+    width:180vw!important;
+    min-width:760px!important;
+    max-width:none!important;
+  }
+  #table{width:100%;min-height:428px}
+  #status{
+    position:fixed!important;left:50vw!important;top:7px!important;
+    max-width:94vw;overflow:hidden;text-overflow:ellipsis;
+    padding:8px 12px!important;font-size:12px!important
+  }
+  #adminBox{position:fixed!important;left:auto!important;right:8px!important;top:7px!important;transform:none!important}
+  #adminOpenBtn{padding:7px 10px!important;font-size:11px!important}
+  .seatHit{width:10.2%!important}
+  .occupied,.eliminatedSeat{
+    min-width:94px!important;padding:5px 8px!important;
+    font-size:12px!important;line-height:1.15!important
+  }
+  .playerStateBadge{font-size:9px!important;padding:3px 7px!important}
+  .roundResult{font-size:9px!important}
+  .playerCard{
+    width:42px!important;height:60px!important;
+    padding:5px!important;font-size:16px!important;border-radius:8px!important
+  }
+  .dealerCard{
+    width:70px!important;height:100px!important;
+    padding:8px!important;font-size:25px!important;border-radius:11px!important
+  }
+  #dealerLabel{font-size:14px!important}
+  #dealerScore{font-size:12px!important}
+  .handTag{font-size:10px!important;padding:3px 7px!important}
+  .betLabel{font-size:9px!important;padding:3px 6px!important}
+  .betMark{width:6.2%!important}
+  .betChip,.betMoney{font-size:9px!important}
+  #footer{min-height:260px;padding:13px 14px 18px}
+  .betTitle{font-size:18px!important}
+  #betSummary{font-size:12px!important}
+  .actionBtn,.turnBtn{font-size:13px!important;min-height:42px}
+}
+
+/* A phone requesting the browser's PC version reports a wide CSS viewport.
+   Compensate for that browser down-scaling so cards and labels remain legible. */
+@media (hover:none) and (pointer:coarse) and (min-width:701px){
+  #app{width:178vw!important;min-width:1500px!important}
+  #table{min-height:843px}
+  .occupied,.eliminatedSeat{
+    min-width:150px!important;padding:8px 12px!important;
+    font-size:18px!important;border-width:2px!important
+  }
+  .playerStateBadge{font-size:14px!important;padding:4px 10px!important}
+  .roundResult{font-size:14px!important}
+  .playerCard{
+    width:72px!important;height:100px!important;
+    padding:8px!important;font-size:27px!important;border-radius:11px!important
+  }
+  .dealerCard{
+    width:112px!important;height:158px!important;
+    padding:11px!important;font-size:39px!important;border-radius:14px!important
+  }
+  #dealerLabel{font-size:21px!important}
+  #dealerScore{font-size:17px!important;padding:6px 14px!important}
+  .handTag{font-size:15px!important;padding:5px 10px!important}
+  .betLabel{font-size:14px!important;padding:4px 8px!important}
+  .betChip,.betMoney{font-size:14px!important}
+  #footer{min-height:390px;padding:20px 24px 28px}
+  .betTitle{font-size:25px!important}
+  #betSummary,#betClock,#turnInfo{font-size:18px!important}
+  .chipBtn{width:86px!important;font-size:14px!important}
+  .actionBtn,.turnBtn{font-size:19px!important;min-height:56px}
+}
 
 
 /* V39 개인 라운드 결과 팝업 */
