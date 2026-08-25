@@ -126,6 +126,11 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
  border:2px solid rgba(255,255,255,.28)
 }
 .chipBtn span{position:relative;z-index:2}
+.chipBtn.selected{
+ transform:translateY(-5px);
+ border-color:#ffe681;
+ box-shadow:0 0 0 4px rgba(255,224,92,.48),0 0 24px rgba(255,205,55,.68),inset 0 0 0 3px rgba(255,255,255,.25)
+}
 .c1{background:radial-gradient(circle at 42% 35%,#e86432,#b93114 72%)}
 .c5{background:radial-gradient(circle at 42% 35%,#626870,#292d32 72%)}
 .c10{background:radial-gradient(circle at 42% 35%,#d24da6,#8f236c 72%)}
@@ -315,6 +320,11 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
 #simpleMain.active{
   box-shadow:0 0 0 4px rgba(255,224,109,.78),0 0 30px rgba(255,213,74,.68),inset 0 0 24px rgba(255,255,255,.08);
 }
+#simpleMain:active,.simpleSide:active{
+ transform:scale(.96);
+ filter:brightness(1.35)
+}
+#simpleMain:disabled,.simpleSide:disabled{opacity:.48;filter:grayscale(.55)}
 #betSummary{
   min-height:20px;
   color:#d6ddd8;
@@ -1010,7 +1020,7 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
   <div id="overlay"></div>
  </div>
  <div id="footer">
-  <div class="betTitle">내 베팅 패널</div>
+  <div class="betTitle">① 금액 칩 선택 → ② 베팅존 선택</div>
 
   <div id="chipRow">
     <button class="chipBtn c1" data-v="10000"><span>₩10,000</span></button>
@@ -1025,7 +1035,7 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
       <span class="panelBetName">PERFECT<br>PAIRS</span>
       <span class="panelChipStack" id="pairPanelStack"></span>
     </button>
-    <button id="simpleMain" class="active" data-mode="main" aria-label="MAIN">
+    <button id="simpleMain" data-mode="main" aria-label="MAIN">
       <span class="mainText">MAIN</span>
       <span class="panelChipStack" id="mainPanelStack"></span>
     </button>
@@ -1090,7 +1100,7 @@ const money=n=>'₩'+Number(n||0).toLocaleString('ko-KR');
 const $=s=>document.querySelector(s);
 const socket=io();
 let state={players:Array(10).fill(null),eliminatedSeats:Array(10).fill(null),dealerHand:[],gameStarted:false,dealing:false,settling:false,tournamentStarted:false,tournamentOver:false,winnerName:'',roundNo:1,status:'서버 연결 중...',turnSeat:null,activeHandIndex:0,serverNow:Date.now(),betSeconds:15,insuranceOpen:false,insuranceDeadline:null,insuranceSeconds:10};
-let selected=null,pending=null,betMode='main';
+let selected=null,pending=null,selectedChipValue=0;
 let token=localStorage.getItem('blackjack_basan_token');
 if(!token){
   token=(crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random().toString(36).slice(2));
@@ -1439,22 +1449,25 @@ function updatePersonalBetButtons(){
  trio.innerHTML=panelChipHTML(p.bet.trio,last.trio);
  if(mainBtn)mainBtn.classList.toggle('hasBet',p.bet.main>0);
 }
-function setBetMode(mode){
- betMode=mode;
- $('#simpleMain')?.classList.toggle('active',mode==='main');
- $('#simplePair')?.classList.toggle('active',mode==='pair');
- $('#simpleTrio')?.classList.toggle('active',mode==='trio');
-}
 ['main','pair','trio'].forEach(mode=>{
  const id=mode==='main'?'simpleMain':mode==='pair'?'simplePair':'simpleTrio';
- $('#'+id)?.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();setBetMode(mode)});
+ $('#'+id)?.addEventListener('click',e=>{
+   e.preventDefault();e.stopPropagation();
+   if(mySeat===null)return alert('먼저 빈 좌석에 착석하세요.');
+   const p=state.players?.[mySeat];
+   if(!p||state.gameStarted||state.tournamentOver||p.confirmed)return;
+   if(!selectedChipValue)return alert('먼저 위에서 금액 칩을 선택하세요.');
+   unlockSound();playChipSound();
+   socket.emit('betAdd',{token,mode,value:selectedChipValue});
+ });
 });
 document.querySelectorAll('.chipBtn').forEach(btn=>{
  btn.onclick=()=>{
    if(mySeat===null)return alert('먼저 빈 좌석에 착석하세요.');
    unlockSound();
-   playChipSound();
-   socket.emit('betAdd',{token,mode:betMode,value:+btn.dataset.v});
+   selectedChipValue=+btn.dataset.v;
+   document.querySelectorAll('.chipBtn').forEach(x=>x.classList.toggle('selected',x===btn));
+   render();
  };
 });
 $('#undoBet').onclick=()=>socket.emit('betUndo',{token});
@@ -1566,7 +1579,8 @@ function render(){
    const total=p.bet.main+p.bet.pair+p.bet.trio;
    const sec=betSecondsLeft(p);
    const betState=p.confirmed?(p.autoConfirmed?' · 자동 베팅 완료':' · 베팅 완료'):(sec?` · 자동확정까지 ${sec}초`:'');
-   summary.textContent=`${p.name} · 내 좌석 ${mySeat+1} · 보유금 ${money(p.bank)} · MAIN ${money(p.bet.main)} · PP ${money(p.bet.pair)} · 21+3 ${money(p.bet.trio)} · 합계 ${money(total)}${betState}`;
+   const chipGuide=selectedChipValue&&!p.confirmed&&!state.gameStarted?` · 선택 칩 ${money(selectedChipValue)} → 베팅존을 누르세요`:'';
+   summary.textContent=`${p.name} · 내 좌석 ${mySeat+1} · 보유금 ${money(p.bank)} · MAIN ${money(p.bet.main)} · PP ${money(p.bet.pair)} · 21+3 ${money(p.bet.trio)} · 합계 ${money(total)}${betState}${chipGuide}`;
  }
  const notice=$('#gameStartNotice'),clock=$('#betClock');
  if(state.tournamentOver){
@@ -1605,6 +1619,7 @@ function render(){
 
  const bettingLocked=!p||state.gameStarted||state.tournamentOver||p.confirmed;
  document.querySelectorAll('.chipBtn').forEach(b=>b.disabled=bettingLocked);
+ ['simpleMain','simplePair','simpleTrio'].forEach(id=>{const b=$('#'+id);if(b)b.disabled=bettingLocked});
  $('#undoBet').disabled=bettingLocked;
  $('#clearBet').disabled=bettingLocked;
  $('#confirmBet').disabled=bettingLocked;
