@@ -33,9 +33,13 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const moneySafe=n=>'₩'+Math.round(Number(n||0)).toLocaleString('ko-KR');
 function makeDeck(){
  const suits=['♠','♥','♦','♣'],ranks=['A','2','3','4','5','6','7','8','9','10','J','Q','K'],d=[];
- for(let k=0;k<6;k++)for(const s of suits)for(const r of ranks)d.push({s,r});
+ for(let k=0;k<2;k++)for(const s of suits)for(const r of ranks)d.push({s,r});
  for(let i=d.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[d[i],d[j]]=[d[j],d[i]]}
  return d;
+}
+function drawCard(){
+ if(!G.deck.length)G.deck=makeDeck();
+ return G.deck.pop();
 }
 function handValue(cards){
  let t=0,a=0;
@@ -68,6 +72,7 @@ function canSplit(p,h){
  return ok&&p.bank>=h.bet;
 }
 function canDouble(p,h){return !!(p&&h&&h.cards.length===2&&!h.doubled&&!h.splitAces&&p.bank>=h.bet)}
+function canSurrender(p,h){return !!(p&&h&&h.cards.length===2&&!h.split&&!h.doubled&&h.state==='PLAY')}
 function byToken(token){return G.players.findIndex(p=>p&&p.token===token)}
 function aliveEntries(){return G.players.map((p,i)=>p?{p,i}:null).filter(Boolean)}
 function alivePlayers(){return G.players.filter(Boolean)}
@@ -122,6 +127,7 @@ function snapshotFor(socket){
    tournamentStarted:G.tournamentStarted,tournamentOver:G.tournamentOver,winnerName:G.winnerName,
    roundNo:G.roundNo,status:G.status,turnSeat,activeHandIndex:G.activeHandIndex,
    canSplit:turnSeat===mySeat&&canSplit(p,h),canDouble:turnSeat===mySeat&&canDouble(p,h),
+   canSurrender:turnSeat===mySeat&&canSurrender(p,h),
    insuranceOpen:G.insuranceOpen,
    insuranceDeadline:G.insuranceDeadline,
    insuranceSeconds:INSURANCE_SECONDS,
@@ -354,7 +360,10 @@ async function startRound(){
  const alive=alivePlayers();
  if(!G.tournamentStarted||alive.length<1)return;
  G.tournamentStarted=true;
- G.gameStarted=true;G.dealing=true;G.settling=false;G.deck=makeDeck();G.dealerHand=[];
+ G.gameStarted=true;G.dealing=true;G.settling=false;G.dealerHand=[];
+ // Keep one continuous two-deck shoe. Shuffle before a round when the cut-card
+ // point is reached; player seats, bankrolls and tournament state stay intact.
+ if(G.deck.length<26)G.deck=makeDeck();
  G.turnOrder=[];G.turnIndex=0;G.activeHandIndex=0;G.hideHole=false;
 
  G.players.forEach((p,i)=>{
@@ -368,23 +377,25 @@ async function startRound(){
  for(const i of G.turnOrder){
    if(!G.players[i])continue;
    G.status=`ROUND ${G.roundNo} · ${G.players[i].name} 첫 번째 카드`;
-   G.players[i].hands[0].cards.push(G.deck.pop());broadcast();await sleep(330)
+   G.players[i].hands[0].cards.push(drawCard());broadcast();await sleep(330)
  }
  G.status=`ROUND ${G.roundNo} · 딜러 오픈카드`;
- G.dealerHand.push(G.deck.pop());broadcast();await sleep(500);
+ G.dealerHand.push(drawCard());broadcast();await sleep(500);
  for(const i of G.turnOrder){
    const p=G.players[i];if(!p)continue;
    const h=p.hands[0];
    G.status=`ROUND ${G.roundNo} · ${p.name} 두 번째 카드`;
-   h.cards.push(G.deck.pop());p.initialCards=h.cards.map(c=>({...c}));
+   h.cards.push(drawCard());p.initialCards=h.cards.map(c=>({...c}));
    if(handValue(h.cards)===21){h.state='STAND';p.lastAction='BLACKJACK'}
    broadcast();await sleep(330);
  }
  G.status=`ROUND ${G.roundNo} · 딜러 비하인드 카드`;
- G.dealerHand.push(G.deck.pop());G.hideHole=true;broadcast();await sleep(500);
+ G.dealerHand.push(drawCard());G.hideHole=true;broadcast();await sleep(500);
  G.dealing=false;
  if(G.dealerHand[0]?.r==='A'){
    openInsurance();
+ }else if(['10','J','Q','K'].includes(G.dealerHand[0]?.r)&&natural({cards:G.dealerHand,split:false})){
+   G.status='딜러 BLACKJACK';G.hideHole=false;broadcast();setTimeout(settle,1100);
  }else{
    G.status='딜링 완료 · 플레이 시작';broadcast();await sleep(350);advanceTurn();
  }
@@ -460,7 +471,7 @@ function advanceTurn(){
  const disconnected=p.connected===false;
  G.status=disconnected
    ? `${p.name} 연결 끊김 · 행동시간 10초`
-   : `${p.name} 차례 · 행동시간 10초 · HIT / STAND / DOUBLE / SPLIT`;
+   : `${p.name} 차례 · 행동시간 10초 · HIT / STAND / DOUBLE / SPLIT / 인출`;
  broadcast();
 
  G.turnTimer=setTimeout(()=>{
@@ -493,10 +504,10 @@ function advanceTurn(){
  },10000);
 }
 async function revealDealer(){
- G.settling=true;G.hideHole=false;G.status='딜러 비하인드 카드 오픈';broadcast();await sleep(650);
+ G.settling=true;G.hideHole=false;G.status='딜러 비하인드 카드 오픈';broadcast();await sleep(1100);
  while(handValue(G.dealerHand)<17){
    G.status=`딜러 ${handValue(G.dealerHand)} · HIT`;
-   G.dealerHand.push(G.deck.pop());broadcast();await sleep(600)
+   G.dealerHand.push(drawCard());broadcast();await sleep(600)
  }
  G.status=`딜러 ${handValue(G.dealerHand)} · 정산`;broadcast();await sleep(500);settle();
 }
@@ -515,7 +526,8 @@ function settle(){
    }
    for(let i=0;i<p.hands.length;i++){
      const h=p.hands[i],v=handValue(h.cards);let ret=0,res='';
-     if(v>21)res='LOSE';
+     if(h.state==='SURRENDER'||h.result==='인출')res='인출';
+     else if(v>21)res='LOSE';
      else if(natural(h)&&dbj){ret=h.bet;res='PUSH'}
      else if(natural(h)&&!dbj){ret=h.bet*2.5;res='BLACKJACK'}
      else if(dbj)res='LOSE';
@@ -744,7 +756,7 @@ io.on('connection',socket=>{
 
    if(action==='hit'){
      p.lastAction='HIT';
-     h.cards.push(G.deck.pop());
+     h.cards.push(drawCard());
      const v=handValue(h.cards);
      if(v>21){
        h.state='BUST';h.result='BUST';
@@ -761,11 +773,19 @@ io.on('connection',socket=>{
    }else if(action==='stand'){
      h.state='STAND';p.lastAction='STAND';
      G.activeHandIndex++;G.status=`${p.name} STAND 완료`;broadcast();setTimeout(advanceTurn,200);
+   }else if(action==='surrender'){
+     if(!canSurrender(p,h))return;
+     const refund=Math.floor(h.bet/2);
+     p.bank+=refund;
+     h.state='SURRENDER';h.result='인출';
+     p.lastAction='인출';
+     G.activeHandIndex++;G.status=`${p.name} 인출 · 베팅금 절반 ${moneySafe(refund)} 반환`;
+     broadcast();setTimeout(advanceTurn,300);
    }else if(action==='double'){
      if(!canDouble(p,h))return;
      if(p.roundStartBank===null||p.roundStartBank===undefined)p.roundStartBank=p.bank;
      p.roundStake=(p.roundStake||0)+h.bet;
-     p.bank-=h.bet;h.bet*=2;h.doubled=true;h.cards.push(G.deck.pop());
+     p.bank-=h.bet;h.bet*=2;h.doubled=true;h.cards.push(drawCard());
      const v=handValue(h.cards);
      if(v>21){h.state='BUST';h.result='BUST';p.lastAction='DOUBLE · BUST'}
      else{h.state='STAND';p.lastAction='DOUBLE · STAND'}
@@ -780,8 +800,8 @@ io.on('connection',socket=>{
      // A-A 스플릿은 각 A에 딱 1장씩만 지급하고 즉시 종료.
      // 스플릿 A 핸드에는 HIT / DOUBLE을 허용하지 않는다.
      const splitAces=(c1.r==='A'&&c2.r==='A');
-     const h1={cards:[c1,G.deck.pop()],bet,state:splitAces?'STAND':'PLAY',doubled:false,split:true,splitAces,result:''};
-     const h2={cards:[c2,G.deck.pop()],bet,state:splitAces?'STAND':'PLAY',doubled:false,split:true,splitAces,result:''};
+     const h1={cards:[c1,drawCard()],bet,state:splitAces?'STAND':'PLAY',doubled:false,split:true,splitAces,result:''};
+     const h2={cards:[c2,drawCard()],bet,state:splitAces?'STAND':'PLAY',doubled:false,split:true,splitAces,result:''};
 
      if(!splitAces){
        for(const x of [h1,h2]){

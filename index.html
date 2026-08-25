@@ -414,6 +414,12 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
  background:repeating-linear-gradient(45deg,#152044 0 5px,#d4b34d 5px 8px);
  border:2px solid #ffe49a
 }
+.dealerCard.reveal{animation:dealerHoleReveal 1s ease-out both;transform-origin:center}
+@keyframes dealerHoleReveal{
+  0%{opacity:0;transform:perspective(500px) rotateY(88deg) scale(.92);filter:brightness(.35)}
+  55%{opacity:.55;filter:brightness(.7)}
+  100%{opacity:1;transform:perspective(500px) rotateY(0) scale(1);filter:brightness(1)}
+}
 .handGroup{
  position:absolute;
  transform:translate(-50%,-50%);
@@ -453,11 +459,12 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
 .playerCard.red{color:#c51b2d}
 
 #turnActions{
- grid-template-columns:repeat(4,1fr)!important;
+ grid-template-columns:repeat(5,1fr)!important;
  width:min(96%,760px)!important;
 }
 #doubleBtn{background:linear-gradient(#b57b28,#7d4f13)}
 #splitBtn{background:linear-gradient(#6d4eb0,#452c78)}
+#surrenderBtn{background:linear-gradient(#58606b,#2f353d)}
 .turnBtn:disabled{
  opacity:.32;
  filter:grayscale(.5)
@@ -1060,6 +1067,7 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
     <button class="turnBtn" id="standBtn">STAND</button>
     <button class="turnBtn" id="doubleBtn">DOUBLE</button>
     <button class="turnBtn" id="splitBtn">SPLIT</button>
+    <button class="turnBtn" id="surrenderBtn">인출</button>
   </div>
   <button id="exitResetBtn" type="button">🚪 나가기 · 새 대회 준비</button>
  </div>
@@ -1101,6 +1109,7 @@ const $=s=>document.querySelector(s);
 const socket=io();
 let state={players:Array(10).fill(null),eliminatedSeats:Array(10).fill(null),dealerHand:[],gameStarted:false,dealing:false,settling:false,tournamentStarted:false,tournamentOver:false,winnerName:'',roundNo:1,status:'서버 연결 중...',turnSeat:null,activeHandIndex:0,serverNow:Date.now(),betSeconds:15,insuranceOpen:false,insuranceDeadline:null,insuranceSeconds:10};
 let selected=null,pending=null,selectedChipValue=0;
+let dealerHoleWasHidden=false;
 let token=localStorage.getItem('blackjack_basan_token');
 if(!token){
   token=(crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random().toString(36).slice(2));
@@ -1400,10 +1409,13 @@ function showPersonalRoundResult(s){
 }
 
 socket.on('state',s=>{
+ const revealDealerHole=dealerHoleWasHidden&&!s.hideHole;
+ dealerHoleWasHidden=!!s.hideHole;
  syncAdminVisibility(s);
  showPersonalRoundResult(s);
  maybePlayDealSound(s);
  state=s;
+ state.revealDealerHole=revealDealerHole;
  mySeat=s.mySeat;
  if(mySeat!==null) selected=mySeat;
  render();
@@ -1477,6 +1489,7 @@ $('#hitBtn').onclick=()=>socket.emit('turnAction',{token,action:'hit'});
 $('#standBtn').onclick=()=>socket.emit('turnAction',{token,action:'stand'});
 $('#doubleBtn').onclick=()=>socket.emit('turnAction',{token,action:'double'});
 $('#splitBtn').onclick=()=>socket.emit('turnAction',{token,action:'split'});
+$('#surrenderBtn').onclick=()=>socket.emit('turnAction',{token,action:'surrender'});
 
 function betSecondsLeft(p){
  if(!p?.betDeadline)return 0;
@@ -1511,7 +1524,8 @@ function render(){
    if(hidden) dealerHTML+='<div class="dealerCard back"></div>';
    else{
      const red=(c.s==='♥'||c.s==='♦')?' red':'';
-     dealerHTML+=`<div class="dealerCard${red}"><div style="position:relative;z-index:2;line-height:.9">${c.r}</div><div style="position:relative;z-index:2;font-size:.78em;margin-top:5px">${c.s}</div></div>`;
+     const reveal=idx===1&&state.revealDealerHole?' reveal':'';
+     dealerHTML+=`<div class="dealerCard${red}${reveal}"><div style="position:relative;z-index:2;line-height:.9">${c.r}</div><div style="position:relative;z-index:2;font-size:.78em;margin-top:5px">${c.s}</div></div>`;
    }
  });
  dc.innerHTML=dealerHTML;
@@ -1630,6 +1644,7 @@ function render(){
  $('#standBtn').disabled=!myTurn;
  $('#doubleBtn').disabled=!(myTurn&&state.canDouble);
  $('#splitBtn').disabled=!(myTurn&&state.canSplit);
+ $('#surrenderBtn').disabled=!(myTurn&&state.canSurrender);
  $('#turnInfo').textContent=myTurn&&h?`${p.name} · HAND ${state.activeHandIndex+1}/${p.hands.length} · 현재 ${handValue(h.cards)}`:(state.turnSeat!==null&&players[state.turnSeat]?`${players[state.turnSeat].name} 차례`:'');
 }
 const introScreen=$('#introScreen');
