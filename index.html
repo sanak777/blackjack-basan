@@ -1110,6 +1110,7 @@ const socket=io();
 let state={players:Array(10).fill(null),eliminatedSeats:Array(10).fill(null),dealerHand:[],gameStarted:false,dealing:false,settling:false,tournamentStarted:false,tournamentOver:false,winnerName:'',roundNo:1,status:'서버 연결 중...',turnSeat:null,activeHandIndex:0,serverNow:Date.now(),betSeconds:15,insuranceOpen:false,insuranceDeadline:null,insuranceSeconds:10};
 let selected=null,pending=null,selectedChipValue=0;
 let dealerHoleWasHidden=false;
+let previousDealerCardCount=0;
 let token=localStorage.getItem('blackjack_basan_token');
 if(!token){
   token=(crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random().toString(36).slice(2));
@@ -1409,13 +1410,17 @@ function showPersonalRoundResult(s){
 }
 
 socket.on('state',s=>{
- const revealDealerHole=dealerHoleWasHidden&&!s.hideHole;
+ const nextDealerCount=(s.dealerHand||[]).length;
+ let revealDealerIndex=-1;
+ if(dealerHoleWasHidden&&!s.hideHole&&nextDealerCount>=2)revealDealerIndex=1;
+ else if(s.settling&&!s.hideHole&&nextDealerCount>previousDealerCardCount)revealDealerIndex=nextDealerCount-1;
  dealerHoleWasHidden=!!s.hideHole;
+ previousDealerCardCount=nextDealerCount;
  syncAdminVisibility(s);
  showPersonalRoundResult(s);
  maybePlayDealSound(s);
  state=s;
- state.revealDealerHole=revealDealerHole;
+ state.revealDealerIndex=revealDealerIndex;
  mySeat=s.mySeat;
  if(mySeat!==null) selected=mySeat;
  render();
@@ -1524,7 +1529,7 @@ function render(){
    if(hidden) dealerHTML+='<div class="dealerCard back"></div>';
    else{
      const red=(c.s==='♥'||c.s==='♦')?' red':'';
-     const reveal=idx===1&&state.revealDealerHole?' reveal':'';
+     const reveal=idx===state.revealDealerIndex?' reveal':'';
      dealerHTML+=`<div class="dealerCard${red}${reveal}"><div style="position:relative;z-index:2;line-height:.9">${c.r}</div><div style="position:relative;z-index:2;font-size:.78em;margin-top:5px">${c.s}</div></div>`;
    }
  });

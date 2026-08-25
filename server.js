@@ -507,7 +507,7 @@ async function revealDealer(){
  G.settling=true;G.hideHole=false;G.status='딜러 비하인드 카드 오픈';broadcast();await sleep(1100);
  while(handValue(G.dealerHand)<17){
    G.status=`딜러 ${handValue(G.dealerHand)} · HIT`;
-   G.dealerHand.push(drawCard());broadcast();await sleep(600)
+   G.dealerHand.push(drawCard());broadcast();await sleep(1100)
  }
  G.status=`딜러 ${handValue(G.dealerHand)} · 정산`;broadcast();await sleep(500);settle();
 }
