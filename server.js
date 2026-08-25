@@ -58,12 +58,26 @@ function pairOdds(cards){
  const red=s=>s==='♥'||s==='♦';
  return red(cards[0].s)===red(cards[1].s)?12:6;
 }
+function pairRuleName(cards,odds){
+ if(!odds)return '';
+ if(odds===25)return '퍼펙트 페어';
+ if(odds===12)return '컬러 페어';
+ return '믹스 페어';
+}
 function trioOdds(cards,up){
  if(!cards||cards.length<2||!up)return 0;
  const cs=[cards[0],cards[1],up],rs=cs.map(c=>rankNumber(c.r)).sort((a,b)=>a-b);
  const flush=cs.every(c=>c.s===cs[0].s),trips=rs[0]===rs[2];
  const straight=(rs[0]+1===rs[1]&&rs[1]+1===rs[2])||(rs[0]===2&&rs[1]===3&&rs[2]===14)||(rs[0]===12&&rs[1]===13&&rs[2]===14);
  if(trips&&flush)return 100;if(straight&&flush)return 40;if(trips)return 30;if(straight)return 10;if(flush)return 5;return 0;
+}
+function trioRuleName(odds){
+ if(odds===100)return '수티드 트립스';
+ if(odds===40)return '스트레이트 플러시';
+ if(odds===30)return '트리플';
+ if(odds===10)return '스트레이트';
+ if(odds===5)return '플러시';
+ return '';
 }
 function natural(h){return h.cards.length===2&&handValue(h.cards)===21&&!h.split}
 function canSplit(p,h){
@@ -369,7 +383,7 @@ async function startRound(){
  G.players.forEach((p,i)=>{
    if(!p||!p.confirmed)return;
    p.hands=[{cards:[],bet:p.bet.main,state:'PLAY',doubled:false,split:false,result:''}];
-   p.initialCards=[];p.inRound=true;p.roundResult='';p.sideResult='';
+   p.initialCards=[];p.inRound=true;p.roundResult='';p.sideResult={pair:null,trio:null};
    p.lastAction='WAIT';p.eliminatedPending=false;p.betDeadline=null;
    p.insuranceBet=0;p.insuranceDecision=null;
    G.turnOrder.push(i);
@@ -516,6 +530,7 @@ function settle(){
  for(const p of G.players){
    if(!p||!p.inRound)continue;
    const texts=[];
+   p.sideResult={pair:null,trio:null};
    if((p.insuranceBet||0)>0){
      if(dbj){
        p.bank+=p.insuranceBet*3;
@@ -539,11 +554,27 @@ function settle(){
    }
    if(p.bet.pair>0){
      const o=pairOdds(p.initialCards);
-     if(o){p.bank+=p.bet.pair*(o+1);texts.push(`PP ${o}:1`)}else texts.push('PP LOSE')
+     if(o){
+       const rule=pairRuleName(p.initialCards,o);
+       p.bank+=p.bet.pair*(o+1);
+       p.sideResult.pair={win:true,rule,multiplier:o,profit:p.bet.pair*o};
+       texts.push(`${rule} ${o}:1`)
+     }else{
+       p.sideResult.pair={win:false,multiplier:0,profit:0};
+       texts.push('PP LOSE')
+     }
    }
    if(p.bet.trio>0){
      const o=trioOdds(p.initialCards,G.dealerHand[0]);
-     if(o){p.bank+=p.bet.trio*(o+1);texts.push(`21+3 ${o}:1`)}else texts.push('21+3 LOSE')
+     if(o){
+       const rule=trioRuleName(o);
+       p.bank+=p.bet.trio*(o+1);
+       p.sideResult.trio={win:true,rule,multiplier:o,profit:p.bet.trio*o};
+       texts.push(`${rule} ${o}:1`)
+     }else{
+       p.sideResult.trio={win:false,multiplier:0,profit:0};
+       texts.push('21+3 LOSE')
+     }
    }
    const allBust=p.hands.length>0&&p.hands.every(h=>h.state==='BUST'||handValue(h.cards)>21);
    if(allBust){
@@ -613,6 +644,7 @@ function nextRound(){
    p.bet={main:0,pair:0,trio:0};p.betLast={main:0,pair:0,trio:0};p.history=[];
    p.confirmed=false;p.autoConfirmed=false;p.betDeadline=null;p.betState='WAITING_BET';
    p.roundResult='';p.lastAction='WAIT';p.eliminatedPending=false;
+   p.sideResult={pair:null,trio:null};
    p.insuranceBet=0;p.insuranceDecision=null;
    p.roundStartBank=null;p.roundStake=0;p.roundNet=0;p.roundResultKind='';p.roundResultAmount=0;
  }

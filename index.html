@@ -279,6 +279,18 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
   color:#ffe37a;
   text-shadow:0 0 14px #ffd956,0 2px 4px #000;
 }
+.sideWinBadge{
+  display:none;position:absolute;left:50%;top:-21px;transform:translateX(-50%);
+  z-index:90;min-width:164px;padding:7px 10px;border-radius:12px;
+  background:linear-gradient(180deg,#fff0a4,#c18a16);border:2px solid #fff1a8;
+  color:#241500;text-shadow:none;font-weight:1000;line-height:1.05;
+  box-shadow:0 0 0 3px rgba(255,211,61,.22),0 0 25px rgba(255,198,36,.78),0 8px 18px #000b;
+  pointer-events:none;white-space:nowrap
+}
+.sideWinBadge.show{display:block;animation:sideWinPop .45s cubic-bezier(.2,1.5,.4,1) both}
+.sideWinBadge b{display:block;font-size:15px}
+.sideWinBadge small{display:block;margin-top:3px;font-size:11px;color:#4a2b00}
+@keyframes sideWinPop{0%{opacity:0;transform:translateX(-50%) scale(.45)}100%{opacity:1;transform:translateX(-50%) scale(1)}}
 #simpleMain{
   width:108px;
   height:108px;
@@ -1039,6 +1051,7 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
 
   <div id="simpleBetArea">
     <button class="simpleSide" id="simplePair" data-mode="pair">
+      <span class="sideWinBadge" id="pairWinBadge"></span>
       <span class="panelBetName">PERFECT<br>PAIRS</span>
       <span class="panelChipStack" id="pairPanelStack"></span>
     </button>
@@ -1047,6 +1060,7 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
       <span class="panelChipStack" id="mainPanelStack"></span>
     </button>
     <button class="simpleSide" id="simpleTrio" data-mode="trio">
+      <span class="sideWinBadge" id="trioWinBadge"></span>
       <span class="panelBetName">21+3</span>
       <span class="panelChipStack" id="trioPanelStack"></span>
     </button>
@@ -1455,15 +1469,29 @@ function panelChipHTML(total,lastValue){
 function updatePersonalBetButtons(){
  const p=(mySeat!==null)?state.players[mySeat]:null;
  const main=$('#mainPanelStack'),pair=$('#pairPanelStack'),trio=$('#trioPanelStack'),mainBtn=$('#simpleMain');
+ const pairBadge=$('#pairWinBadge'),trioBadge=$('#trioWinBadge');
  if(!main||!pair||!trio)return;
- const sig=p?`${mySeat}|${p.bet.main}|${p.bet.pair}|${p.bet.trio}|${p.betLast?.main||0}|${p.betLast?.pair||0}|${p.betLast?.trio||0}`:'none';
+ const pairResult=p?.sideResult?.pair||null,trioResult=p?.sideResult?.trio||null;
+ const sig=p?`${mySeat}|${p.bet.main}|${p.bet.pair}|${p.bet.trio}|${p.betLast?.main||0}|${p.betLast?.pair||0}|${p.betLast?.trio||0}|${pairResult?.win?'W'+pairResult.rule+'-'+pairResult.multiplier+'-'+pairResult.profit:'-'}|${trioResult?.win?'W'+trioResult.rule+'-'+trioResult.multiplier+'-'+trioResult.profit:'-'}`:'none';
  if(sig===lastPersonalBetSignature)return;
  lastPersonalBetSignature=sig;
- if(!p){main.innerHTML=pair.innerHTML=trio.innerHTML=''; if(mainBtn)mainBtn.classList.remove('hasBet'); return;}
+ if(!p){
+   main.innerHTML=pair.innerHTML=trio.innerHTML='';
+   pairBadge?.classList.remove('show');trioBadge?.classList.remove('show');
+   if(mainBtn)mainBtn.classList.remove('hasBet');return;
+ }
  const last=p.betLast||{main:0,pair:0,trio:0};
  main.innerHTML=panelChipHTML(p.bet.main,last.main);
  pair.innerHTML=panelChipHTML(p.bet.pair,last.pair);
  trio.innerHTML=panelChipHTML(p.bet.trio,last.trio);
+ if(pairBadge){
+   pairBadge.innerHTML=pairResult?.win?`<b>${escHTML(pairResult.rule)} ×${Number(pairResult.multiplier)}</b><small>순수익 +${money(pairResult.profit)}</small>`:'';
+   pairBadge.classList.toggle('show',!!pairResult?.win);
+ }
+ if(trioBadge){
+   trioBadge.innerHTML=trioResult?.win?`<b>${escHTML(trioResult.rule)} ×${Number(trioResult.multiplier)}</b><small>순수익 +${money(trioResult.profit)}</small>`:'';
+   trioBadge.classList.toggle('show',!!trioResult?.win);
+ }
  if(mainBtn)mainBtn.classList.toggle('hasBet',p.bet.main>0);
 }
 ['main','pair','trio'].forEach(mode=>{
