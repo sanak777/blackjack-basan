@@ -365,15 +365,15 @@ async function startRound(){
    p.insuranceBet=0;p.insuranceDecision=null;
    G.turnOrder.push(i);
  });
- // Opening deal order:
- // all players' first card -> dealer up-card -> all players' second card -> dealer hole-card.
+ G.status=`ROUND ${G.roundNo} · 생존 ${G.turnOrder.length}명 · 딜러 오픈카드`;
+ G.dealerHand.push(G.deck.pop());broadcast();await sleep(500);
  for(const i of G.turnOrder){
    if(!G.players[i])continue;
    G.status=`ROUND ${G.roundNo} · ${G.players[i].name} 첫 번째 카드`;
    G.players[i].hands[0].cards.push(G.deck.pop());broadcast();await sleep(330)
  }
- G.status=`ROUND ${G.roundNo} · 딜러 오픈카드`;
- G.dealerHand.push(G.deck.pop());broadcast();await sleep(500);
+ G.status=`ROUND ${G.roundNo} · 딜러 비하인드 카드`;
+ G.dealerHand.push(G.deck.pop());G.hideHole=true;broadcast();await sleep(500);
  for(const i of G.turnOrder){
    const p=G.players[i];if(!p)continue;
    const h=p.hands[0];
@@ -382,8 +382,6 @@ async function startRound(){
    if(handValue(h.cards)===21){h.state='STAND';p.lastAction='BLACKJACK'}
    broadcast();await sleep(330);
  }
- G.status=`ROUND ${G.roundNo} · 딜러 비하인드 카드`;
- G.dealerHand.push(G.deck.pop());G.hideHole=true;broadcast();await sleep(500);
  G.dealing=false;
  if(G.dealerHand[0]?.r==='A'){
    openInsurance();
