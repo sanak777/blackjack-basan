@@ -31,6 +31,7 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
 #topBetCountdown .timerTitle{font-size:clamp(7px,1vw,14px);font-weight:800;white-space:nowrap}
 #topBetCountdown .timerNumber{margin-top:4px;color:#f4cf58;font:1000 clamp(20px,3.45vw,49px)/.9 Georgia,serif;text-shadow:0 0 10px #d8a92466}
 #topBetCountdown .timerUnit{margin-left:3px;color:#eee;font:900 clamp(7px,.92vw,13px) sans-serif}
+#topBetCountdown.timerHidden{display:none}
 .seatHit{
  position:absolute;transform:translate(-50%,-50%);
  width:8.1%;aspect-ratio:1;border:0;border-radius:50%;
@@ -1586,6 +1587,9 @@ function render(){
    const title=topTimer.querySelector('.timerTitle'),number=topTimer.querySelector('.timerNumber'),unit=topTimer.querySelector('.timerUnit');
    const pendingSeconds=Math.max(0,...players.filter(x=>x&&!x.confirmed).map(x=>betSecondsLeft(x)));
    syncCountdownSound(pendingSeconds,state.tournamentStarted&&!state.gameStarted&&!state.tournamentOver);
+   // Keep seat 1 completely clear once betting closes. The large timer is
+   // useful only while players are betting; PLAY/READY/result states hide it.
+   topTimer.classList.toggle('timerHidden',state.tournamentStarted&&pendingSeconds<=0);
    if(state.tournamentOver){title.textContent='대회 종료';number.textContent='END';unit.textContent='';}
    else if(state.gameStarted){title.textContent='게임 진행 중';number.textContent='PLAY';unit.textContent='';}
    else if(state.tournamentStarted&&pendingSeconds>0){title.textContent='베팅 마감까지';number.textContent=String(pendingSeconds);unit.textContent='초';}
