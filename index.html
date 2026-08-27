@@ -982,9 +982,53 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
 }
 #personalResultCountdown{color:#ffd455;font-size:21px;font-weight:1000;margin-right:4px}
 
+/* V41 · BGM + ROUND WIN ROLLER */
+#bgmControl{
+  position:fixed;left:8px;top:8px;z-index:14000;
+  display:flex;align-items:center;gap:7px;padding:6px 9px;
+  border:1px solid #9b7a31;border-radius:999px;
+  background:rgba(4,5,4,.88);box-shadow:0 4px 14px #0009;
+  color:#ffe39a;font-size:11px;font-weight:900
+}
+#bgmToggle{border:0;background:transparent;color:#ffe39a;font-size:14px;cursor:pointer;padding:0}
+#bgmVolume{width:82px;accent-color:#d9ad3e;cursor:pointer}
+#bgmPercent{width:28px;text-align:right;color:#fff}
+#roundWinRoller{
+  display:none;position:fixed;left:50%;top:5.5%;transform:translateX(-50%);
+  z-index:12020;width:min(1120px,86vw);overflow:hidden;
+  border:1px solid #d7b44d;border-radius:14px;
+  background:linear-gradient(90deg,rgba(3,3,3,.97),rgba(34,24,4,.97),rgba(3,3,3,.97));
+  box-shadow:0 8px 28px #000d,0 0 20px #e8b93644;color:#fff
+}
+#roundWinRoller.show{display:block}
+.rollerTitle{text-align:center;padding:6px 10px 4px;color:#f8d76f;font:1000 12px Georgia,serif;letter-spacing:.14em;border-bottom:1px solid #8b6c2766}
+.rollerViewport{overflow:hidden;white-space:nowrap;padding:9px 0}
+.rollerTrack{display:inline-flex;align-items:center;gap:28px;min-width:max-content;animation:roundWinnerRoll 12s linear infinite;will-change:transform}
+.rollerItem{display:inline-flex;align-items:center;gap:9px;font-weight:1000;font-size:clamp(12px,1.5vw,19px)}
+.rollerRank{color:#1b1200;background:linear-gradient(#ffe98d,#bd8816);border-radius:999px;padding:3px 8px}
+.rollerName{color:#fff}.rollerMoney{color:#ffe16e;text-shadow:0 0 8px #e6ae3555}
+.rollerEmpty{color:#ddd;font-weight:900;padding:0 28px}
+@keyframes roundWinnerRoll{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+@media(max-width:700px){
+  #bgmControl{top:auto;bottom:7px;left:7px;padding:5px 7px;gap:5px}
+  #bgmVolume{width:62px}
+  #roundWinRoller{top:3.5%;width:92vw}.rollerTitle{font-size:10px}.rollerViewport{padding:7px 0}
+}
+
 </style>
 </head>
 <body>
+
+<div id="bgmControl" aria-label="BGM 음량 조절">
+  <button id="bgmToggle" type="button" aria-label="BGM 켜기 또는 끄기">♫</button>
+  <span>BGM</span>
+  <input id="bgmVolume" type="range" min="0" max="100" value="5" aria-label="BGM 음량">
+  <span id="bgmPercent">5%</span>
+</div>
+<div id="roundWinRoller" aria-live="polite">
+  <div class="rollerTitle">ROUND WINNERS · 승리금액 순위</div>
+  <div class="rollerViewport"><div id="roundWinTrack" class="rollerTrack"></div></div>
+</div>
 
 <div id="personalResultOverlay">
   <div id="personalResultCard">
@@ -1141,6 +1185,22 @@ let dealerHoleWasHidden=false;
 let previousDealerCardCount=0;
 const countdownAudio=new Audio('blackjack-15sec-countdown.mp3');
 countdownAudio.preload='auto';
+const bgmAudio=new Audio('casino-table-bgm.mp3');
+bgmAudio.preload='auto';
+bgmAudio.loop=true;
+bgmAudio.volume=0.05;
+let bgmMuted=false;
+function startBgm(){
+  if(bgmMuted)return;
+  const p=bgmAudio.play();
+  if(p&&typeof p.catch==='function')p.catch(()=>{});
+}
+function syncBgmControl(){
+  const slider=$('#bgmVolume'),percent=$('#bgmPercent'),toggle=$('#bgmToggle');
+  if(!slider||!percent||!toggle)return;
+  percent.textContent=`${Math.round(Number(slider.value))}%`;
+  toggle.textContent=bgmMuted||Number(slider.value)===0?'🔇':'♫';
+}
 let countdownSoundActive=false;
 function syncCountdownSound(seconds,active){
   if(active&&seconds>0){
@@ -1294,9 +1354,9 @@ function getAudioCtx(){
 }
 function unlockSound(){
   const ctx=getAudioCtx();
-  if(!ctx)return;
-  if(ctx.state==='suspended')ctx.resume();
+  if(ctx&&ctx.state==='suspended')ctx.resume();
   soundUnlocked=true;
+  startBgm();
 }
 document.addEventListener('pointerdown',unlockSound,{once:true,passive:true});
 document.addEventListener('touchstart',unlockSound,{once:true,passive:true});
@@ -1455,6 +1515,40 @@ function showPersonalRoundResult(s){
   }
 }
 
+let shownRollerKey='';
+function showRoundWinRoller(s){
+  const box=$('#roundWinRoller'),track=$('#roundWinTrack');
+  if(!box||!track)return;
+  const until=Number(s?.resultShowUntil||0);
+  if(until<=Date.now()||s?.dealing||!s?.tournamentStarted){
+    box.classList.remove('show');
+    shownRollerKey='';
+    return;
+  }
+  const winners=(s.players||[])
+    .filter(p=>p&&Number(p.roundNet||0)>0)
+    .sort((a,b)=>Number(b.roundNet||0)-Number(a.roundNet||0)||String(a.name).localeCompare(String(b.name),'ko'));
+  const key=`${s.roundNo}|${winners.map(p=>`${p.name}:${p.roundNet}`).join('|')}`;
+  if(key!==shownRollerKey){
+    shownRollerKey=key;
+    if(winners.length){
+      let previous=null,rank=0;
+      const items=winners.map((p,index)=>{
+        const amount=Number(p.roundNet||0);
+        if(amount!==previous)rank=index+1;
+        previous=amount;
+        return `<span class="rollerItem"><span class="rollerRank">${rank}위</span><span class="rollerName">${escHTML(p.name)}</span><span class="rollerMoney">+${money(amount)}</span></span>`;
+      }).join('');
+      track.innerHTML=items+items;
+      track.style.animationPlayState=winners.length===1?'paused':'running';
+    }else{
+      track.innerHTML='<span class="rollerEmpty">이번 라운드 순이익 승리자가 없습니다</span>';
+      track.style.animationPlayState='paused';
+    }
+  }
+  box.classList.add('show');
+}
+
 socket.on('state',s=>{
  const nextDealerCount=(s.dealerHand||[]).length;
  let revealDealerIndex=-1;
@@ -1464,6 +1558,7 @@ socket.on('state',s=>{
  previousDealerCardCount=nextDealerCount;
  syncAdminVisibility(s);
  showPersonalRoundResult(s);
+ showRoundWinRoller(s);
  maybePlayDealSound(s);
  state=s;
  state.revealDealerIndex=revealDealerIndex;
@@ -1738,6 +1833,19 @@ if(introScreen && $('#bg')){
   if($('#bg').complete) syncIntroBg(); else $('#bg').addEventListener('load',syncIntroBg,{once:true});
 }
 enterTable?.addEventListener('click',()=>{unlockSound();introScreen?.classList.add('hide')});
+$('#bgmVolume')?.addEventListener('input',e=>{
+  const value=Math.max(0,Math.min(100,Number(e.target.value)||0));
+  bgmAudio.volume=value/100;
+  bgmMuted=value===0;
+  syncBgmControl();
+  if(value>0)startBgm();else bgmAudio.pause();
+});
+$('#bgmToggle')?.addEventListener('click',()=>{
+  bgmMuted=!bgmMuted;
+  if(bgmMuted)bgmAudio.pause();else startBgm();
+  syncBgmControl();
+});
+syncBgmControl();
 socket.on('connect',()=>socket.emit('hello',{token}));
 
 let adminLoggedIn=false;
