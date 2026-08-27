@@ -982,6 +982,78 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
 }
 #personalResultCountdown{color:#ffd455;font-size:21px;font-weight:1000;margin-right:4px}
 
+/* V42 · MOBILE TABLE RECOVERY */
+@media(max-width:700px) and (orientation:portrait){
+  html,body{width:100%;overflow-x:hidden!important}
+  body{justify-content:center!important}
+  #app{width:100vw!important;min-width:0!important;overflow:hidden}
+  #table{width:100vw!important;aspect-ratio:1.32/1!important}
+  #status{
+    position:absolute!important;top:1.2%!important;left:50%!important;
+    max-width:76%;padding:4px 8px!important;font-size:8px!important;
+    overflow:hidden;text-overflow:ellipsis
+  }
+  #topBetCountdown{right:1%!important;top:7.5%!important;width:17%!important;height:10.5%!important}
+  #topBetCountdown .timerTitle{font-size:6px!important}
+  #topBetCountdown .timerNumber{font-size:20px!important}
+  #dealerArea{top:24%!important}
+  .dealerCard{width:44px!important;height:63px!important;font-size:16px!important;border-radius:7px!important;padding:5px!important}
+  .dealerCard.back:before{font-size:23px!important}
+  #dealerScore{font-size:8px!important;padding:2px 7px!important;margin-top:3px!important}
+  .handGroup{z-index:54!important;max-width:64px!important}
+  .handRow{gap:0!important;justify-content:center!important;max-width:64px!important}
+  .playerCard{
+    flex:0 0 20px!important;width:20px!important;height:30px!important;
+    margin-left:-9px!important;padding:2px!important;border-radius:4px!important;
+    font-size:9px!important;border-width:1px!important
+  }
+  .playerCard:first-child{margin-left:0!important}
+  .handRow.manyCards .playerCard{margin-left:-12px!important}
+  .handRow.manyCards .playerCard:first-child{margin-left:0!important}
+  .playerCard:after{inset:2px!important;border-radius:3px!important}
+  .handTag{font-size:6px!important;line-height:1!important;padding:2px 4px!important;margin-bottom:2px!important;white-space:nowrap}
+  .occupied{
+    z-index:48!important;min-width:46px!important;max-width:66px!important;
+    padding:2px 3px!important;border-radius:5px!important;font-size:7px!important;
+    line-height:1.12!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important
+  }
+  .occupied b{font-size:7px!important;margin-top:1px!important}
+  .playerStateBadge{font-size:6px!important;padding:1px 3px!important;margin-top:2px!important;max-width:62px!important;overflow:hidden!important;text-overflow:ellipsis!important}
+  .roundResult{display:none!important}
+  .betLabel{font-size:6px!important}
+  .eliminatedSeat{min-width:50px!important;max-width:66px!important;padding:3px!important;font-size:6px!important}
+  #footer{min-height:220px!important;padding:10px 8px 78px!important;overflow:hidden}
+  .betTitle{font-size:12px!important}
+  #chipRow{gap:4px!important}
+  .chipBtn{width:46px!important}
+  #simpleBetArea{transform:scale(.84);transform-origin:top center;margin-bottom:-25px}
+  #betSummary{font-size:8px!important;white-space:normal!important;line-height:1.4!important;max-height:34px;overflow:hidden}
+  #turnActions{width:96%!important;gap:4px!important}
+  .turnBtn{padding:9px 2px!important;font-size:9px!important}
+
+  /* Large result modal becomes a compact, non-blocking toast on mobile. */
+  #personalResultOverlay{
+    align-items:flex-start!important;justify-content:center!important;
+    padding:56px 8px 0!important;background:transparent!important;pointer-events:none!important
+  }
+  #personalResultCard{
+    width:min(300px,86vw)!important;border-radius:11px!important;border-width:1px!important;
+    box-shadow:0 7px 22px #000c,0 0 12px rgba(255,196,55,.25)!important
+  }
+  #personalResultTop{padding:7px 8px 2px!important;display:flex!important;align-items:center!important;justify-content:center!important;gap:6px!important}
+  #personalResultIcon{font-size:18px!important}
+  #personalResultTitle{margin:0!important;font-size:16px!important;letter-spacing:0!important}
+  #personalResultBrand{display:none!important}
+  #personalResultNumbers{margin:5px 8px 3px!important;padding:5px!important}
+  .resultLabel{font-size:8px!important}.resultMoney{margin-top:2px!important;font-size:13px!important}
+  #personalResultSummary{padding:2px 8px 5px!important}
+  #personalResultSummaryLabel{display:none!important}
+  #personalResultSummaryMoney{margin:0!important;font-size:20px!important}
+  #personalResultBottom{padding:4px!important;font-size:8px!important}
+  #personalResultCountdown{font-size:11px!important}
+  #roundWinRoller{top:1.5%!important;width:94vw!important;z-index:11990!important}
+}
+
 /* V41 · BGM + ROUND WIN ROLLER */
 #bgmControl{
   position:fixed;left:8px;top:8px;z-index:14000;
@@ -1202,19 +1274,31 @@ function syncBgmControl(){
   toggle.textContent=bgmMuted||Number(slider.value)===0?'🔇':'♫';
 }
 let countdownSoundActive=false;
+let lastSoftTickSecond=null;
+function playSoftCountdownTick(seconds){
+  if(!soundUnlocked||seconds<=0||seconds===lastSoftTickSecond)return;
+  lastSoftTickSecond=seconds;
+  const ctx=getAudioCtx();
+  if(!ctx)return;
+  try{
+    const now=ctx.currentTime,osc=ctx.createOscillator(),gain=ctx.createGain();
+    osc.type='sine';
+    osc.frequency.setValueAtTime(seconds<=3?610:470,now);
+    gain.gain.setValueAtTime(0.0001,now);
+    gain.gain.exponentialRampToValueAtTime(seconds<=3?0.018:0.011,now+0.006);
+    gain.gain.exponentialRampToValueAtTime(0.0001,now+0.055);
+    osc.connect(gain);gain.connect(ctx.destination);osc.start(now);osc.stop(now+0.06);
+  }catch(e){}
+}
 function syncCountdownSound(seconds,active){
   if(active&&seconds>0){
-    if(!countdownSoundActive){
-      countdownSoundActive=true;
-      countdownAudio.currentTime=Math.max(0,15-seconds);
-      countdownAudio.play().catch(()=>{});
-    }
+    countdownSoundActive=true;
+    playSoftCountdownTick(seconds);
     return;
   }
   if(countdownSoundActive){
-    countdownAudio.pause();
-    countdownAudio.currentTime=0;
     countdownSoundActive=false;
+    lastSoftTickSecond=null;
   }
 }
 let token=localStorage.getItem('blackjack_basan_token');
@@ -1742,7 +1826,7 @@ function render(){
        const hv=handValue(h.cards||[]);
        const shown=(h.state==='BUST'||h.result==='BUST')?`BUST ${hv}`:`${hv}`;
        const txt=p.hands.length>1?`H${hi+1} · ${shown}${h.doubled?' · DOUBLE':''}${h.result&&h.result!=='BUST'?' · '+h.result:''}`:`${shown}${h.doubled?' · DOUBLE':''}${h.result&&h.result!=='BUST'?' · '+h.result:''}`;
-       html+=`<div class="${cls}">${escHTML(txt)}</div><div class="handRow">`;
+       html+=`<div class="${cls}">${escHTML(txt)}</div><div class="handRow${(h.cards||[]).length>=5?' manyCards':''}">`;
        (h.cards||[]).forEach(c=>{
          const red=(c.s==='♥'||c.s==='♦')?' red':'';
          html+=`<div class="playerCard${red}"><div style="position:relative;z-index:2;line-height:.9">${c.r}</div><div style="position:relative;z-index:2;font-size:.78em;margin-top:3px">${c.s}</div></div>`;
