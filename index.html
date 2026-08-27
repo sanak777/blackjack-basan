@@ -1066,25 +1066,46 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
 #bgmVolume{width:82px;accent-color:#d9ad3e;cursor:pointer}
 #bgmPercent{width:28px;text-align:right;color:#fff}
 #roundWinRoller{
-  display:none;position:fixed;left:50%;top:5.5%;transform:translateX(-50%);
-  z-index:12020;width:min(1120px,86vw);overflow:hidden;
-  border:1px solid #d7b44d;border-radius:14px;
-  background:linear-gradient(90deg,rgba(3,3,3,.97),rgba(34,24,4,.97),rgba(3,3,3,.97));
-  box-shadow:0 8px 28px #000d,0 0 20px #e8b93644;color:#fff
+  display:none;position:absolute;left:22%;top:22%;transform:none;
+  z-index:96;width:68%;height:48%;overflow:hidden;
+  pointer-events:none;color:#fff;
+  -webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 18%,#000 82%,transparent 100%);
+  mask-image:linear-gradient(to bottom,transparent 0,#000 18%,#000 82%,transparent 100%)
 }
 #roundWinRoller.show{display:block}
-.rollerTitle{text-align:center;padding:6px 10px 4px;color:#f8d76f;font:1000 12px Georgia,serif;letter-spacing:.14em;border-bottom:1px solid #8b6c2766}
-.rollerViewport{overflow:hidden;white-space:nowrap;padding:9px 0}
-.rollerTrack{display:inline-flex;align-items:center;gap:28px;min-width:max-content;animation:roundWinnerRoll 12s linear infinite;will-change:transform}
-.rollerItem{display:inline-flex;align-items:center;gap:9px;font-weight:1000;font-size:clamp(12px,1.5vw,19px)}
+.rollerTitle{
+  position:absolute;left:50%;top:1%;transform:translateX(-50%);z-index:2;
+  width:max-content;padding:7px 16px;border:1px solid #d7b44d;border-radius:999px;
+  background:rgba(3,3,3,.9);box-shadow:0 5px 18px #000b;
+  text-align:center;color:#f8d76f;font:1000 12px Georgia,serif;letter-spacing:.14em
+}
+.rollerViewport{position:absolute;inset:0;overflow:hidden}
+.rollerTrack{
+  position:absolute;left:0;right:0;top:0;display:flex;flex-direction:column;
+  align-items:center;gap:10px;padding:14px;will-change:transform;
+  animation:roundWinnerRollUp 5s cubic-bezier(.2,.72,.22,1) forwards
+}
+.rollerItem{
+  display:flex;align-items:center;justify-content:center;gap:9px;
+  min-width:min(480px,82vw);padding:10px 14px;border:1px solid #a98432;border-radius:12px;
+  background:linear-gradient(90deg,rgba(3,3,3,.94),rgba(45,31,5,.96),rgba(3,3,3,.94));
+  box-shadow:0 6px 18px #000b;font-weight:1000;font-size:clamp(13px,2vw,20px)
+}
 .rollerRank{color:#1b1200;background:linear-gradient(#ffe98d,#bd8816);border-radius:999px;padding:3px 8px}
 .rollerName{color:#fff}.rollerMoney{color:#ffe16e;text-shadow:0 0 8px #e6ae3555}
-.rollerEmpty{color:#ddd;font-weight:900;padding:0 28px}
-@keyframes roundWinnerRoll{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+.rollerEmpty{color:#ddd;font-weight:900;padding:12px 20px;border-radius:12px;background:#050505e8}
+@keyframes roundWinnerRollUp{
+  0%{transform:translateY(48vh);opacity:0}
+  7%{opacity:1}
+  84%{transform:translateY(9%);opacity:1}
+  100%{transform:translateY(9%);opacity:1}
+}
 @media(max-width:700px){
   #bgmControl{top:auto;bottom:7px;left:7px;padding:5px 7px;gap:5px}
   #bgmVolume{width:62px}
-  #roundWinRoller{top:3.5%;width:92vw}.rollerTitle{font-size:10px}.rollerViewport{padding:7px 0}
+  #roundWinRoller{left:18%!important;top:22%!important;bottom:auto!important;width:72%!important;height:48%!important}
+  .rollerTitle{top:1%;font-size:8px;padding:4px 8px}.rollerTrack{gap:5px;padding:6px}
+  .rollerItem{padding:5px 7px;min-width:64vw;font-size:10px}
 }
 
 </style>
@@ -1097,11 +1118,6 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
   <input id="bgmVolume" type="range" min="0" max="100" value="5" aria-label="BGM 음량">
   <span id="bgmPercent">5%</span>
 </div>
-<div id="roundWinRoller" aria-live="polite">
-  <div class="rollerTitle">ROUND WINNERS · 승리금액 순위</div>
-  <div class="rollerViewport"><div id="roundWinTrack" class="rollerTrack"></div></div>
-</div>
-
 <div id="personalResultOverlay">
   <div id="personalResultCard">
     <div id="personalResultTop">
@@ -1144,6 +1160,10 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
 
 <div id="app">
  <div id="table">
+  <div id="roundWinRoller" aria-live="polite">
+    <div class="rollerTitle">ROUND WINNERS · 승리금액 순위</div>
+    <div class="rollerViewport"><div id="roundWinTrack" class="rollerTrack"></div></div>
+  </div>
 
 <div id="adminBox">
   <button id="adminOpenBtn" type="button">ADMIN</button>
@@ -1623,11 +1643,13 @@ function showRoundWinRoller(s){
         previous=amount;
         return `<span class="rollerItem"><span class="rollerRank">${rank}위</span><span class="rollerName">${escHTML(p.name)}</span><span class="rollerMoney">+${money(amount)}</span></span>`;
       }).join('');
-      track.innerHTML=items+items;
-      track.style.animationPlayState=winners.length===1?'paused':'running';
+      track.innerHTML=items;
+      track.style.animation='none';
+      void track.offsetHeight;
+      track.style.animation='roundWinnerRollUp 5s cubic-bezier(.2,.72,.22,1) forwards';
     }else{
       track.innerHTML='<span class="rollerEmpty">이번 라운드 순이익 승리자가 없습니다</span>';
-      track.style.animationPlayState='paused';
+      track.style.animation='roundWinnerRollUp 5s cubic-bezier(.2,.72,.22,1) forwards';
     }
   }
   box.classList.add('show');

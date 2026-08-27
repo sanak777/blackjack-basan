@@ -638,9 +638,9 @@ function settle(){
  if(checkTargetWinner())return;
 
  const brokeCount=alivePlayers().filter(p=>p.bank<MIN_BET).length;
- G.resultShowUntil=Date.now()+5000;
- G.status=`ROUND ${G.roundNo} 개인 결과 확인 · 5초 후 다음 베팅`;
- broadcast();setTimeout(nextRound,5000);
+ G.resultShowUntil=Date.now()+7000;
+ G.status=`ROUND ${G.roundNo} 승리금액 롤러 · 7초 후 다음 베팅`;
+ broadcast();setTimeout(nextRound,7000);
 }
 function nextRound(){
  stopTurnTimer();stopInsuranceTimer();
