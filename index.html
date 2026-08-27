@@ -1108,6 +1108,35 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
   .rollerItem{padding:5px 7px;min-width:64vw;font-size:10px}
 }
 
+/* V43 · ONE-LINE PERSONAL RESULT BAR */
+#personalResultOverlay,#personalResultOverlay.show{
+  position:fixed!important;inset:0!important;z-index:12000!important;
+  display:none!important;align-items:flex-end!important;justify-content:center!important;
+  padding:0 10px 18px!important;background:transparent!important;pointer-events:none!important
+}
+#personalResultOverlay.show{display:flex!important}
+#personalResultCard,#personalResultCard.lose{
+  width:min(720px,94vw)!important;min-height:0!important;border:1px solid #d4af45!important;
+  border-radius:999px!important;background:linear-gradient(90deg,rgba(4,4,4,.96),rgba(39,27,5,.97),rgba(4,4,4,.96))!important;
+  box-shadow:0 6px 20px #000c,0 0 12px rgba(255,196,55,.24)!important;overflow:hidden!important
+}
+#personalResultCard.lose{border-color:#9a575b!important;background:linear-gradient(90deg,rgba(5,5,5,.96),rgba(45,9,12,.97),rgba(5,5,5,.96))!important}
+#personalResultTop,#personalResultNumbers,#personalResultBottom{display:none!important}
+#personalResultSummary{padding:10px 18px!important;display:flex!important;align-items:center!important;justify-content:center!important;gap:14px!important;white-space:nowrap!important}
+#personalResultSummaryLabel{display:block!important;margin:0!important;color:#eee!important;font-size:clamp(12px,2.2vw,18px)!important;font-weight:1000!important}
+#personalResultSummaryMoney,#personalResultCard.lose #personalResultSummaryMoney{
+  margin:0!important;font-size:clamp(22px,5vw,38px)!important;line-height:1!important;
+  color:#ffd455!important;text-shadow:0 0 10px rgba(255,194,48,.3)!important
+}
+#personalResultCard.lose #personalResultSummaryMoney{color:#ff747b!important;text-shadow:none!important}
+@media(max-width:900px) and (orientation:portrait){
+  #personalResultOverlay,#personalResultOverlay.show{padding:0 7px 72px!important}
+  #personalResultCard,#personalResultCard.lose{width:94vw!important;border-radius:12px!important}
+  #personalResultSummary{padding:8px 10px!important;gap:9px!important}
+  #personalResultSummaryLabel{font-size:12px!important}
+  #personalResultSummaryMoney,#personalResultCard.lose #personalResultSummaryMoney{font-size:23px!important}
+}
+
 </style>
 </head>
 <body>
@@ -1578,7 +1607,7 @@ function showPersonalRoundResult(s){
     sideLabel.textContent='승리 금액';
     amountEl.textContent=money(amount);
     amountEl.className='resultMoney win';
-    summaryLabel.textContent='이번 라운드 순이익';
+    summaryLabel.textContent='승리금액';
     summaryMoney.textContent='+'+money(amount);
   }else if(kind==='LOSE'){
     icon.textContent='💔';
@@ -1586,7 +1615,7 @@ function showPersonalRoundResult(s){
     sideLabel.textContent='손실 금액';
     amountEl.textContent=money(amount);
     amountEl.className='resultMoney lose';
-    summaryLabel.textContent='이번 라운드 손실';
+    summaryLabel.textContent='손실금액';
     summaryMoney.textContent='-'+money(amount);
   }else{
     icon.textContent='🤝';
@@ -1594,7 +1623,7 @@ function showPersonalRoundResult(s){
     sideLabel.textContent='결과 금액';
     amountEl.textContent=money(0);
     amountEl.className='resultMoney push';
-    summaryLabel.textContent='이번 라운드 결과';
+    summaryLabel.textContent='무승부';
     summaryMoney.textContent=money(0);
   }
 
