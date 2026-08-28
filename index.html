@@ -1054,17 +1054,7 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
   #roundWinRoller{top:1.5%!important;width:94vw!important;z-index:11990!important}
 }
 
-/* V41 · BGM + ROUND WIN ROLLER */
-#bgmControl{
-  position:fixed;left:8px;top:8px;z-index:14000;
-  display:flex;align-items:center;gap:7px;padding:6px 9px;
-  border:1px solid #9b7a31;border-radius:999px;
-  background:rgba(4,5,4,.88);box-shadow:0 4px 14px #0009;
-  color:#ffe39a;font-size:11px;font-weight:900
-}
-#bgmToggle{border:0;background:transparent;color:#ffe39a;font-size:14px;cursor:pointer;padding:0}
-#bgmVolume{width:82px;accent-color:#d9ad3e;cursor:pointer}
-#bgmPercent{width:28px;text-align:right;color:#fff}
+/* V41 · ROUND WIN ROLLER */
 #roundWinRoller{
   display:none;position:absolute;left:22%;top:22%;transform:none;
   z-index:96;width:68%;height:48%;overflow:hidden;
@@ -1101,8 +1091,6 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
   100%{transform:translateY(9%);opacity:1}
 }
 @media(max-width:700px){
-  #bgmControl{top:auto;bottom:7px;left:7px;padding:5px 7px;gap:5px}
-  #bgmVolume{width:62px}
   #roundWinRoller{left:18%!important;top:22%!important;bottom:auto!important;width:72%!important;height:48%!important}
   .rollerTitle{top:1%;font-size:8px;padding:4px 8px}.rollerTrack{gap:5px;padding:6px}
   .rollerItem{padding:5px 7px;min-width:64vw;font-size:10px}
@@ -1141,12 +1129,6 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
 </head>
 <body>
 
-<div id="bgmControl" aria-label="BGM 음량 조절">
-  <button id="bgmToggle" type="button" aria-label="BGM 켜기 또는 끄기">♫</button>
-  <span>BGM</span>
-  <input id="bgmVolume" type="range" min="0" max="100" value="5" aria-label="BGM 음량">
-  <span id="bgmPercent">5%</span>
-</div>
 <div id="personalResultOverlay">
   <div id="personalResultCard">
     <div id="personalResultTop">
@@ -1306,22 +1288,6 @@ let dealerHoleWasHidden=false;
 let previousDealerCardCount=0;
 const countdownAudio=new Audio('blackjack-15sec-countdown.mp3');
 countdownAudio.preload='auto';
-const bgmAudio=new Audio('casino-table-bgm.mp3');
-bgmAudio.preload='auto';
-bgmAudio.loop=true;
-bgmAudio.volume=0.05;
-let bgmMuted=false;
-function startBgm(){
-  if(bgmMuted)return;
-  const p=bgmAudio.play();
-  if(p&&typeof p.catch==='function')p.catch(()=>{});
-}
-function syncBgmControl(){
-  const slider=$('#bgmVolume'),percent=$('#bgmPercent'),toggle=$('#bgmToggle');
-  if(!slider||!percent||!toggle)return;
-  percent.textContent=`${Math.round(Number(slider.value))}%`;
-  toggle.textContent=bgmMuted||Number(slider.value)===0?'🔇':'♫';
-}
 let countdownSoundActive=false;
 let lastSoftTickSecond=null;
 function playSoftCountdownTick(seconds){
@@ -1489,7 +1455,6 @@ function unlockSound(){
   const ctx=getAudioCtx();
   if(ctx&&ctx.state==='suspended')ctx.resume();
   soundUnlocked=true;
-  startBgm();
 }
 document.addEventListener('pointerdown',unlockSound,{once:true,passive:true});
 document.addEventListener('touchstart',unlockSound,{once:true,passive:true});
@@ -1968,19 +1933,6 @@ if(introScreen && $('#bg')){
   if($('#bg').complete) syncIntroBg(); else $('#bg').addEventListener('load',syncIntroBg,{once:true});
 }
 enterTable?.addEventListener('click',()=>{unlockSound();introScreen?.classList.add('hide')});
-$('#bgmVolume')?.addEventListener('input',e=>{
-  const value=Math.max(0,Math.min(100,Number(e.target.value)||0));
-  bgmAudio.volume=value/100;
-  bgmMuted=value===0;
-  syncBgmControl();
-  if(value>0)startBgm();else bgmAudio.pause();
-});
-$('#bgmToggle')?.addEventListener('click',()=>{
-  bgmMuted=!bgmMuted;
-  if(bgmMuted)bgmAudio.pause();else startBgm();
-  syncBgmControl();
-});
-syncBgmControl();
 socket.on('connect',()=>socket.emit('hello',{token}));
 
 let adminLoggedIn=false;
