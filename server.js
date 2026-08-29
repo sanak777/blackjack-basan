@@ -81,8 +81,9 @@ function trioRuleName(odds){
 }
 function natural(h){return h.cards.length===2&&handValue(h.cards)===21&&!h.split}
 function canSplit(p,h){
- if(!p||!h||h.cards.length!==2||h.split)return false;
- const f=['J','Q','K'],ok=h.cards[0].r===h.cards[1].r||(f.includes(h.cards[0].r)&&f.includes(h.cards[1].r));
+ if(!p||!h||h.cards.length!==2||h.state!=='PLAY'||p.hands.length>=4)return false;
+ const splitValue=r=>['10','J','Q','K'].includes(r)?10:(r==='A'?11:Number(r));
+ const ok=splitValue(h.cards[0].r)===splitValue(h.cards[1].r);
  return ok&&p.bank>=h.bet;
 }
 function canDouble(p,h){return !!(p&&h&&h.cards.length===2&&!h.doubled&&!h.splitAces&&p.bank>=h.bet)}
@@ -815,7 +816,7 @@ io.on('connection',socket=>{
    const i=byToken(String(token||'')),[seat,p,h]=current();
    if(i<0||i!==seat||!p||!h||h.state!=='PLAY'||G.dealing||G.settling||G.insuranceOpen)return;
    // A-A 스플릿 핸드는 카드 1장 지급 후 종료이므로 추가 액션 금지.
-   if(h.splitAces && (action==='hit'||action==='double'||action==='split')){
+   if(h.splitAces && (action==='hit'||action==='double')){
      h.state='STAND';
      p.lastAction='A-A SPLIT · 자동 STAND';
      G.status=`${p.name} A-A SPLIT · 추가 HIT/DOUBLE 불가`;
@@ -875,8 +876,17 @@ io.on('connection',socket=>{
      // A-A 스플릿은 각 A에 딱 1장씩만 지급하고 즉시 종료.
      // 스플릿 A 핸드에는 HIT / DOUBLE을 허용하지 않는다.
      const splitAces=(c1.r==='A'&&c2.r==='A');
-     const h1={cards:[c1,drawCard()],bet,state:splitAces?'STAND':'PLAY',doubled:false,split:true,splitAces,result:''};
-     const h2={cards:[c2,drawCard()],bet,state:splitAces?'STAND':'PLAY',doubled:false,split:true,splitAces,result:''};
+     const h1={cards:[c1,drawCard()],bet,state:'PLAY',doubled:false,split:true,splitAces,result:''};
+     const h2={cards:[c2,drawCard()],bet,state:'PLAY',doubled:false,split:true,splitAces,result:''};
+
+     // A-A는 각 핸드에 한 장만 지급한다. 단, 다시 A를 받았다면
+     // 최대 4핸드 범위에서 재스플릿 선택만 허용한다.
+     if(splitAces){
+       for(const x of [h1,h2]){
+         const pairOfAces=x.cards[0].r==='A'&&x.cards[1].r==='A';
+         if(!pairOfAces)x.state='STAND';
+       }
+     }
 
      if(!splitAces){
        for(const x of [h1,h2]){
@@ -889,11 +899,15 @@ io.on('connection',socket=>{
      p.hands.splice(G.activeHandIndex,1,h1,h2);
 
      if(splitAces){
-       p.lastAction='A-A SPLIT · 1장씩 지급 · 자동 STAND';
-       G.status=`${p.name} A-A SPLIT · 각 핸드 1장 지급 후 자동 STAND`;
+       const canResplitNow=p.hands.some(x=>x.state==='PLAY'&&x.splitAces&&x.cards.length===2&&x.cards[0].r==='A'&&x.cards[1].r==='A')&&p.hands.length<4;
+       if(!canResplitNow){
+         for(const x of p.hands)if(x.splitAces&&x.state==='PLAY')x.state='STAND';
+       }
+       p.lastAction=canResplitNow?'A-A SPLIT · 재스플릿 선택 가능':'A-A SPLIT · 1장씩 지급 · 자동 STAND';
+       G.status=canResplitNow
+         ?`${p.name} A-A SPLIT · 최대 4핸드까지 재스플릿 가능`
+         :`${p.name} A-A SPLIT · 각 핸드 1장 지급 후 자동 STAND`;
        broadcast();
-       // 두 핸드 모두 이미 STAND이므로 다음 플레이어로 바로 진행.
-       G.activeHandIndex+=2;
        return setTimeout(advanceTurn,450);
      }
 
