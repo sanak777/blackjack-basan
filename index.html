@@ -34,9 +34,8 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
 #topBetCountdown.timerHidden{display:none}
 .seatHit{
  position:absolute;transform:translate(-50%,-50%);
- width:10.2%;aspect-ratio:1;border:0;border-radius:50%;
+ width:8.1%;aspect-ratio:1;border:0;border-radius:50%;
  background:transparent;z-index:30;cursor:pointer;
- touch-action:manipulation;
 }
 .seatHit:active{box-shadow:0 0 0 3px #ffe06e,0 0 22px #ffd54f}
 .seatHit.selected{box-shadow:0 0 0 3px #ffe06e,0 0 25px #ffd54f}
@@ -1087,8 +1086,8 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
   animation:roundWinnerRollUp 5s cubic-bezier(.2,.72,.22,1) forwards
 }
 .rollerItem{
-  display:flex;align-items:center;justify-content:flex-start;gap:12px;width:100%;
-  padding:10px 16px;border:1px solid #a98432;border-radius:12px;
+  display:flex;align-items:center;justify-content:flex-start;gap:9px;width:100%;
+  padding:10px 14px;border:1px solid #a98432;border-radius:12px;
   background:linear-gradient(90deg,rgba(3,3,3,.94),rgba(45,31,5,.96),rgba(3,3,3,.94));
   box-shadow:0 6px 18px #000b;font-weight:1000;font-size:clamp(13px,2vw,20px)
 }
@@ -1106,7 +1105,7 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
   #bgmVolume{width:62px}
   #roundWinRoller{left:18%!important;top:22%!important;bottom:auto!important;width:72%!important;height:48%!important}
   .rollerTitle{top:1%;font-size:8px;padding:4px 8px}.rollerTrack{gap:5px;padding:6px}
-  .rollerItem{width:100%;padding:6px 9px;font-size:10px}
+  .rollerItem{width:100%;padding:5px 7px;font-size:10px}
 }
 
 /* V43 · ONE-LINE PERSONAL RESULT BAR */
@@ -1136,25 +1135,6 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
   #personalResultSummary{padding:8px 10px!important;gap:9px!important}
   #personalResultSummaryLabel{font-size:12px!important}
   #personalResultSummaryMoney,#personalResultCard.lose #personalResultSummaryMoney{font-size:23px!important}
-}
-
-/* V46 · PORTRAIT MOBILE LUXURY RATIO */
-@media(max-width:900px) and (orientation:portrait){
-  html,body{width:100%!important;max-width:100%!important;overflow-x:hidden!important}
-  body{justify-content:center!important}
-  #app{width:100vw!important;min-width:0!important;max-width:100vw!important;overflow:hidden!important}
-  #table{
-    width:100vw!important;max-width:100vw!important;
-    aspect-ratio:1.78/1!important;overflow:hidden!important
-  }
-  #bg{
-    width:100%!important;height:100%!important;
-    object-fit:cover!important;object-position:center center!important
-  }
-  .seatHit{
-    z-index:140!important;pointer-events:auto!important;
-    touch-action:manipulation!important
-  }
 }
 
 </style>
@@ -1386,12 +1366,6 @@ const seats=[
  [82.0,29.5],[92.0,47.5],[86.0,67.5],[71.5,81.5],[57.0,87.5],
  [43.0,87.5],[28.5,81.5],[14.0,67.5],[8.0,47.5],[18.0,29.5]
 ];
-// The visible round "앉기" buttons sit farther outside than the card/name
-// anchors above. Use their own centers so tapping the icon seats the player.
-const seatButtonPos=[
- [92.5,23.5],[97.0,47.5],[92.5,70.0],[77.0,83.0],[60.0,90.0],
- [40.0,90.0],[23.0,83.0],[7.5,70.0],[3.0,47.5],[7.5,23.5]
-];
 const betPos=[
  {main:[82.0,38.0],pair:[78.1,41.3],trio:[85.9,41.3]},
  {main:[92.0,56.0],pair:[88.1,59.3],trio:[95.9,59.3]},
@@ -1405,25 +1379,12 @@ const betPos=[
  {main:[18.0,38.0],pair:[14.1,41.3],trio:[21.9,41.3]}
 ];
 
-seatButtonPos.forEach((xy,i)=>{
+seats.forEach((xy,i)=>{
  const b=document.createElement('button');
  b.className='seatHit';
  b.dataset.i=i;
- // Cover both the printed seat number/card anchor and the outer round
- // "앉기" icon. Clamp the region inside the table so edge seats remain
- // fully tappable on narrow mobile screens.
- const cardAnchor=seats[i];
- const left=Math.max(0,Math.min(cardAnchor[0],xy[0])-4.2);
- const right=Math.min(100,Math.max(cardAnchor[0],xy[0])+4.2);
- const top=Math.max(0,Math.min(cardAnchor[1],xy[1])-5.2);
- const bottom=Math.min(100,Math.max(cardAnchor[1],xy[1])+5.2);
- b.style.left=left+'%';
- b.style.top=top+'%';
- b.style.width=(right-left)+'%';
- b.style.height=(bottom-top)+'%';
- b.style.aspectRatio='auto';
- b.style.transform='none';
- b.style.borderRadius='42%';
+ b.style.left=xy[0]+'%';
+ b.style.top=xy[1]+'%';
  b.onclick=()=>openSeat(i);
  $('#table').appendChild(b);
  seatButtons.push(b);
