@@ -1390,8 +1390,21 @@ seatButtonPos.forEach((xy,i)=>{
  const b=document.createElement('button');
  b.className='seatHit';
  b.dataset.i=i;
- b.style.left=xy[0]+'%';
- b.style.top=xy[1]+'%';
+ // Cover both the printed seat number/card anchor and the outer round
+ // "앉기" icon. Clamp the region inside the table so edge seats remain
+ // fully tappable on narrow mobile screens.
+ const cardAnchor=seats[i];
+ const left=Math.max(0,Math.min(cardAnchor[0],xy[0])-4.2);
+ const right=Math.min(100,Math.max(cardAnchor[0],xy[0])+4.2);
+ const top=Math.max(0,Math.min(cardAnchor[1],xy[1])-5.2);
+ const bottom=Math.min(100,Math.max(cardAnchor[1],xy[1])+5.2);
+ b.style.left=left+'%';
+ b.style.top=top+'%';
+ b.style.width=(right-left)+'%';
+ b.style.height=(bottom-top)+'%';
+ b.style.aspectRatio='auto';
+ b.style.transform='none';
+ b.style.borderRadius='42%';
  b.onclick=()=>openSeat(i);
  $('#table').appendChild(b);
  seatButtons.push(b);
