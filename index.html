@@ -34,8 +34,9 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
 #topBetCountdown.timerHidden{display:none}
 .seatHit{
  position:absolute;transform:translate(-50%,-50%);
- width:8.1%;aspect-ratio:1;border:0;border-radius:50%;
+ width:10.2%;aspect-ratio:1;border:0;border-radius:50%;
  background:transparent;z-index:30;cursor:pointer;
+ touch-action:manipulation;
 }
 .seatHit:active{box-shadow:0 0 0 3px #ffe06e,0 0 22px #ffd54f}
 .seatHit.selected{box-shadow:0 0 0 3px #ffe06e,0 0 25px #ffd54f}
@@ -1054,7 +1055,17 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
   #roundWinRoller{top:1.5%!important;width:94vw!important;z-index:11990!important}
 }
 
-/* V41 · ROUND WIN ROLLER */
+/* V41 · BGM + ROUND WIN ROLLER */
+#bgmControl{
+  position:fixed;left:8px;top:8px;z-index:14000;
+  display:flex;align-items:center;gap:7px;padding:6px 9px;
+  border:1px solid #9b7a31;border-radius:999px;
+  background:rgba(4,5,4,.88);box-shadow:0 4px 14px #0009;
+  color:#ffe39a;font-size:11px;font-weight:900
+}
+#bgmToggle{border:0;background:transparent;color:#ffe39a;font-size:14px;cursor:pointer;padding:0}
+#bgmVolume{width:82px;accent-color:#d9ad3e;cursor:pointer}
+#bgmPercent{width:28px;text-align:right;color:#fff}
 #roundWinRoller{
   display:none;position:absolute;left:22%;top:22%;transform:none;
   z-index:96;width:68%;height:48%;overflow:hidden;
@@ -1072,17 +1083,17 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
 .rollerViewport{position:absolute;inset:0;overflow:hidden}
 .rollerTrack{
   position:absolute;left:0;right:0;top:0;display:flex;flex-direction:column;
-  align-items:center;gap:10px;padding:14px;will-change:transform;
+  align-items:stretch;gap:10px;padding:14px;will-change:transform;
   animation:roundWinnerRollUp 5s cubic-bezier(.2,.72,.22,1) forwards
 }
 .rollerItem{
-  display:flex;align-items:center;justify-content:center;gap:9px;
-  min-width:min(480px,82vw);padding:10px 14px;border:1px solid #a98432;border-radius:12px;
+  display:flex;align-items:center;justify-content:flex-start;gap:12px;width:100%;
+  padding:10px 16px;border:1px solid #a98432;border-radius:12px;
   background:linear-gradient(90deg,rgba(3,3,3,.94),rgba(45,31,5,.96),rgba(3,3,3,.94));
   box-shadow:0 6px 18px #000b;font-weight:1000;font-size:clamp(13px,2vw,20px)
 }
-.rollerRank{color:#1b1200;background:linear-gradient(#ffe98d,#bd8816);border-radius:999px;padding:3px 8px}
-.rollerName{color:#fff}.rollerMoney{color:#ffe16e;text-shadow:0 0 8px #e6ae3555}
+.rollerName{flex:1;color:#fff;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rollerMoney{color:#ffe16e;text-align:right;white-space:nowrap;text-shadow:0 0 8px #e6ae3555}
 .rollerEmpty{color:#ddd;font-weight:900;padding:12px 20px;border-radius:12px;background:#050505e8}
 @keyframes roundWinnerRollUp{
   0%{transform:translateY(48vh);opacity:0}
@@ -1091,9 +1102,11 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
   100%{transform:translateY(9%);opacity:1}
 }
 @media(max-width:700px){
+  #bgmControl{top:auto;bottom:7px;left:7px;padding:5px 7px;gap:5px}
+  #bgmVolume{width:62px}
   #roundWinRoller{left:18%!important;top:22%!important;bottom:auto!important;width:72%!important;height:48%!important}
   .rollerTitle{top:1%;font-size:8px;padding:4px 8px}.rollerTrack{gap:5px;padding:6px}
-  .rollerItem{padding:5px 7px;min-width:64vw;font-size:10px}
+  .rollerItem{width:100%;padding:6px 9px;font-size:10px}
 }
 
 /* V43 · ONE-LINE PERSONAL RESULT BAR */
@@ -1129,6 +1142,12 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
 </head>
 <body>
 
+<div id="bgmControl" aria-label="BGM 음량 조절">
+  <button id="bgmToggle" type="button" aria-label="BGM 켜기 또는 끄기">♫</button>
+  <span>BGM</span>
+  <input id="bgmVolume" type="range" min="0" max="100" value="5" aria-label="BGM 음량">
+  <span id="bgmPercent">5%</span>
+</div>
 <div id="personalResultOverlay">
   <div id="personalResultCard">
     <div id="personalResultTop">
@@ -1288,6 +1307,22 @@ let dealerHoleWasHidden=false;
 let previousDealerCardCount=0;
 const countdownAudio=new Audio('blackjack-15sec-countdown.mp3');
 countdownAudio.preload='auto';
+const bgmAudio=new Audio('casino-table-bgm.mp3');
+bgmAudio.preload='auto';
+bgmAudio.loop=true;
+bgmAudio.volume=0.05;
+let bgmMuted=false;
+function startBgm(){
+  if(bgmMuted)return;
+  const p=bgmAudio.play();
+  if(p&&typeof p.catch==='function')p.catch(()=>{});
+}
+function syncBgmControl(){
+  const slider=$('#bgmVolume'),percent=$('#bgmPercent'),toggle=$('#bgmToggle');
+  if(!slider||!percent||!toggle)return;
+  percent.textContent=`${Math.round(Number(slider.value))}%`;
+  toggle.textContent=bgmMuted||Number(slider.value)===0?'🔇':'♫';
+}
 let countdownSoundActive=false;
 let lastSoftTickSecond=null;
 function playSoftCountdownTick(seconds){
@@ -1332,6 +1367,12 @@ const seats=[
  [82.0,29.5],[92.0,47.5],[86.0,67.5],[71.5,81.5],[57.0,87.5],
  [43.0,87.5],[28.5,81.5],[14.0,67.5],[8.0,47.5],[18.0,29.5]
 ];
+// The visible round "앉기" buttons sit farther outside than the card/name
+// anchors above. Use their own centers so tapping the icon seats the player.
+const seatButtonPos=[
+ [92.5,23.5],[97.0,47.5],[92.5,70.0],[77.0,83.0],[60.0,90.0],
+ [40.0,90.0],[23.0,83.0],[7.5,70.0],[3.0,47.5],[7.5,23.5]
+];
 const betPos=[
  {main:[82.0,38.0],pair:[78.1,41.3],trio:[85.9,41.3]},
  {main:[92.0,56.0],pair:[88.1,59.3],trio:[95.9,59.3]},
@@ -1345,7 +1386,7 @@ const betPos=[
  {main:[18.0,38.0],pair:[14.1,41.3],trio:[21.9,41.3]}
 ];
 
-seats.forEach((xy,i)=>{
+seatButtonPos.forEach((xy,i)=>{
  const b=document.createElement('button');
  b.className='seatHit';
  b.dataset.i=i;
@@ -1455,6 +1496,7 @@ function unlockSound(){
   const ctx=getAudioCtx();
   if(ctx&&ctx.state==='suspended')ctx.resume();
   soundUnlocked=true;
+  startBgm();
 }
 document.addEventListener('pointerdown',unlockSound,{once:true,passive:true});
 document.addEventListener('touchstart',unlockSound,{once:true,passive:true});
@@ -1630,12 +1672,9 @@ function showRoundWinRoller(s){
   if(key!==shownRollerKey){
     shownRollerKey=key;
     if(winners.length){
-      let previous=null,rank=0;
-      const items=winners.map((p,index)=>{
+      const items=winners.map(p=>{
         const amount=Number(p.roundNet||0);
-        if(amount!==previous)rank=index+1;
-        previous=amount;
-        return `<span class="rollerItem"><span class="rollerRank">${rank}위</span><span class="rollerName">${escHTML(p.name)}</span><span class="rollerMoney">+${money(amount)}</span></span>`;
+        return `<span class="rollerItem"><span class="rollerName">${escHTML(p.name)}</span><span class="rollerMoney">+${money(amount)}</span></span>`;
       }).join('');
       track.innerHTML=items;
       track.style.animation='none';
@@ -1933,6 +1972,19 @@ if(introScreen && $('#bg')){
   if($('#bg').complete) syncIntroBg(); else $('#bg').addEventListener('load',syncIntroBg,{once:true});
 }
 enterTable?.addEventListener('click',()=>{unlockSound();introScreen?.classList.add('hide')});
+$('#bgmVolume')?.addEventListener('input',e=>{
+  const value=Math.max(0,Math.min(100,Number(e.target.value)||0));
+  bgmAudio.volume=value/100;
+  bgmMuted=value===0;
+  syncBgmControl();
+  if(value>0)startBgm();else bgmAudio.pause();
+});
+$('#bgmToggle')?.addEventListener('click',()=>{
+  bgmMuted=!bgmMuted;
+  if(bgmMuted)bgmAudio.pause();else startBgm();
+  syncBgmControl();
+});
+syncBgmControl();
 socket.on('connect',()=>socket.emit('hello',{token}));
 
 let adminLoggedIn=false;
