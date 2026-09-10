@@ -1664,7 +1664,7 @@ function speakDealer(text){
   try{
     const utterance=new SpeechSynthesisUtterance(text);
     utterance.lang='ko-KR';
-    utterance.rate=1.08;
+    utterance.rate=1.18;
     utterance.pitch=1.02;
     utterance.volume=1;
     if(koreanDealerVoice)utterance.voice=koreanDealerVoice;
@@ -1673,15 +1673,14 @@ function speakDealer(text){
 }
 function spokenCard(c){
   if(!c||c.hidden)return '';
-  const suits={'♠':'스페이드','♥':'하트','♦':'다이아','♣':'클로버'};
-  const ranks={A:'에이스',K:'킹',Q:'퀸',J:'잭','10':'텐'};
-  return `${suits[c.s]||c.s} ${ranks[c.r]||c.r}`;
+  const ranks={A:'에이스','2':'이','3':'삼','4':'사','5':'오','6':'육','7':'칠','8':'팔','9':'구','10':'텐',J:'텐',Q:'텐',K:'텐'};
+  return ranks[c.r]||String(c.r||'');
 }
 function handVoiceEnding(h){
   const total=handValue(h?.cards||[]);
-  if(total>21)return `현재 ${total}. 버스트`;
+  if(total>21)return '버스트';
   if((h?.cards||[]).length===2&&total===21&&!h.split)return '블랙잭';
-  return `현재 ${total}`;
+  return '';
 }
 function announceBlackjackChanges(next,prev){
   if(!voiceStateReady){voiceStateReady=true;return}
@@ -1698,7 +1697,8 @@ function announceBlackjackChanges(next,prev){
     const changed=nh.slice(start,start+2);
     const parts=changed.map((h,j)=>{
       const c=(h.cards||[])[(h.cards||[]).length-1];
-      return `${start+j+1}번 패, ${spokenCard(c)}, ${handVoiceEnding(h)}`;
+      const ending=handVoiceEnding(h);
+      return `${start+j+1}번 패 ${spokenCard(c)}${ending?`. ${ending}`:''}`;
     }).filter(Boolean);
     if(parts.length)speakDealer(`스플릿. ${parts.join('. ')}`);
   }else if(np){
@@ -1708,7 +1708,8 @@ function announceBlackjackChanges(next,prev){
       const added=newCards.slice(oldCards.length);
       added.forEach((c,j)=>{
         const prefix=nh.length>1?`${hi+1}번 패, `:'';
-        const ending=j===added.length-1?`, ${handVoiceEnding(h)}`:'';
+        const result=j===added.length-1?handVoiceEnding(h):'';
+        const ending=result?`. ${result}`:'';
         speakDealer(`${prefix}${spokenCard(c)}${ending}`);
       });
     });
@@ -1723,11 +1724,10 @@ function announceBlackjackChanges(next,prev){
     if(before&&!before.hidden)return;
     const visible=nd.filter(x=>x&&!x.hidden);
     const total=handValue(visible);
-    let ending=`현재 ${total}`;
-    if(!next.hideHole&&nd.length===2&&total===21)ending='딜러 블랙잭';
-    else if(!next.hideHole&&total>21)ending=`현재 ${total}. 딜러 버스트`;
-    const label=i===0?'딜러 오픈 카드':(before?.hidden?'딜러 비하인드 카드':'딜러 추가 카드');
-    speakDealer(`${label}, ${spokenCard(c)}, ${ending}`);
+    let ending='';
+    if(!next.hideHole&&nd.length===2&&total===21)ending='. 블랙잭';
+    else if(!next.hideHole&&total>21)ending='. 버스트';
+    speakDealer(`딜러 ${spokenCard(c)}${ending}`);
   });
 }
 
