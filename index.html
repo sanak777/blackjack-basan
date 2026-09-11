@@ -1690,29 +1690,20 @@ function announceBlackjackChanges(next,prev){
   const pp=seat!==null&&seat!==undefined?prev?.players?.[seat]:null;
   const nh=np?.hands||[],ph=pp?.hands||[];
 
-  // A split replaces one hand with two, so announce the newly dealt card on
-  // each resulting hand. Only this browser's own seat is ever inspected.
-  if(np&&pp&&nh.length>ph.length){
-    const start=Math.max(0,Number(next.activeHandIndex||0));
-    const changed=nh.slice(start,start+2);
-    const parts=changed.map((h,j)=>{
-      const c=(h.cards||[])[(h.cards||[]).length-1];
-      const ending=handVoiceEnding(h);
-      return `${start+j+1}번 패 ${spokenCard(c)}${ending?`. ${ending}`:''}`;
-    }).filter(Boolean);
-    if(parts.length)speakDealer(`스플릿. ${parts.join('. ')}`);
-  }else if(np){
-    nh.forEach((h,hi)=>{
-      const oldCards=ph[hi]?.cards||[],newCards=h.cards||[];
-      if(newCards.length<=oldCards.length)return;
-      const added=newCards.slice(oldCards.length);
-      added.forEach((c,j)=>{
-        const prefix=nh.length>1?`${hi+1}번 패, `:'';
-        const result=j===added.length-1?handVoiceEnding(h):'';
-        const ending=result?`. ${result}`:'';
-        speakDealer(`${prefix}${spokenCard(c)}${ending}`);
-      });
-    });
+  // Personal cards stay silent. This browser announces only its own
+  // BLACKJACK/BUST/PUSH result, never another player's result.
+  if(np){
+    let personalResult='';
+    for(let hi=0;hi<nh.length;hi++){
+      const h=nh[hi],old=ph[hi];
+      const oldCount=(old?.cards||[]).length,newCount=(h?.cards||[]).length;
+      if(newCount>oldCount){
+        const result=handVoiceEnding(h);
+        if(result==='블랙잭'||result==='버스트'){personalResult=result;break}
+      }
+    }
+    if(!personalResult&&nh.some((h,hi)=>h?.result==='PUSH'&&ph[hi]?.result!=='PUSH'))personalResult='푸쉬';
+    if(personalResult)speakDealer(personalResult);
   }
 
   // Dealer cards are public. Every connected browser announces the same
