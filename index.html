@@ -39,6 +39,9 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
 }
 .seatHit:active{box-shadow:0 0 0 3px #ffe06e,0 0 22px #ffd54f}
 .seatHit.selected{box-shadow:0 0 0 3px #ffe06e,0 0 25px #ffd54f}
+.seatHit.adminMoveSeat{display:block!important;visibility:visible!important;pointer-events:auto!important;z-index:88;border-color:#f0c956;background:rgba(21,64,36,.82);box-shadow:0 0 0 2px rgba(240,201,86,.45),0 4px 14px #0009}
+.seatHit.adminMoveSeat:after{content:"이동";position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);color:#fff2a8;font-size:10px;font-weight:1000;text-shadow:0 1px 3px #000}
+.occupied.adminMovable{pointer-events:auto!important;cursor:pointer;outline:1px solid rgba(240,201,86,.65);outline-offset:3px}
 .occupied{
  position:absolute;transform:translate(-50%,-50%);
  z-index:40;pointer-events:none;text-align:center;
@@ -1397,6 +1400,10 @@ seats.forEach((xy,i)=>{
  $('#table').appendChild(b);
  seatButtons.push(b);
 });
+$('#overlay')?.addEventListener('click',e=>{
+ const target=e.target.closest?.('.occupied.adminMovable[data-player-seat]');
+ if(target)openSeat(Number(target.dataset.playerSeat));
+});
 
 function showSeatModal(i){
  pending=i;
@@ -1945,9 +1952,11 @@ function render(){
  for(let i=0;i<seatButtons.length;i++){
    const occupied=!!players[i];
    const eliminated=!!eliminatedSeats[i];
-   const unavailable=occupied||eliminated;
+   const adminCanMove=!!(occupied&&state.isAdmin&&!state.gameStarted&&!state.tournamentStarted&&['A','B'].includes(tableId));
+   const unavailable=eliminated||(occupied&&!adminCanMove);
    seatButtons[i].classList.toggle('seatOccupied',occupied);
    seatButtons[i].classList.toggle('seatEliminated',eliminated);
+   seatButtons[i].classList.toggle('adminMoveSeat',adminCanMove);
    seatButtons[i].style.setProperty('display',unavailable?'none':'block','important');
    seatButtons[i].style.setProperty('visibility',unavailable?'hidden':'visible','important');
    seatButtons[i].style.pointerEvents=unavailable?'none':'auto';
@@ -1965,7 +1974,8 @@ function render(){
    const sx=seats[i][0],sy=seats[i][1];
    const owner=i===mySeat?' · YOU':'';
    const badge=playerBadge(p,i);
-   html+=`<div class="occupied" style="left:${sx}%;top:${sy+7.2}%">${escHTML(p.name)}${owner}<b>${money(p.bank)}</b><span class="playerStateBadge ${badge.cls}">${escHTML(badge.txt)}</span>${p.roundResult?`<span class="roundResult">${escHTML(p.roundResult)}</span>`:''}</div>`;
+   const adminMovable=state.isAdmin&&!state.gameStarted&&!state.tournamentStarted&&['A','B'].includes(tableId);
+   html+=`<div class="occupied${adminMovable?' adminMovable':''}" data-player-seat="${i}" style="left:${sx}%;top:${sy+7.2}%">${escHTML(p.name)}${owner}<b>${money(p.bank)}</b><span class="playerStateBadge ${badge.cls}">${escHTML(badge.txt)}</span>${p.roundResult?`<span class="roundResult">${escHTML(p.roundResult)}</span>`:''}</div>`;
    if(p.hands&&p.hands.length){
      const allBust=p.hands.every(x=>x.state==='BUST');
      html+=`<div class="handGroup${allBust?' busted':''}" style="left:${sx}%;top:${sy-6.2}%">`;
