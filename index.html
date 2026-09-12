@@ -1450,10 +1450,17 @@ function openSeat(i){
  }
  const p=state.players[i];
  if(p){
-   if(state.isAdmin&&['A','B'].includes(tableId)&&!state.gameStarted&&!state.tournamentStarted){
+   if(state.isAdmin&&['A','B'].includes(tableId)){
      const targetTable=tableId==='A'?'B':'A';
-     if(confirm(`${p.name} 님을 ${targetTable}테이블 빈자리로 이동할까요?`)){
-       socket.emit('adminMovePlayer',{seat:i,targetTable});
+     const canMove=!state.gameStarted&&!state.tournamentStarted;
+     const guide=canMove
+       ?`${p.name} 참가자 관리\n\n1 = ${targetTable}테이블로 이동\n2 = 강퇴\n0 = 취소`
+       :`${p.name} 참가자 관리\n\n게임 진행 중에는 이동할 수 없습니다.\n2 = 강퇴\n0 = 취소`;
+     const choice=prompt(guide,'0');
+     if(choice==='1'&&canMove){
+       if(confirm(`${p.name} 님을 ${targetTable}테이블 빈자리로 이동할까요?`))socket.emit('adminMovePlayer',{seat:i,targetTable});
+     }else if(choice==='2'){
+       if(confirm(`${p.name} 님을 정말 강퇴할까요?${state.tournamentStarted?'\n대회 중 강퇴는 즉시 탈락 처리됩니다.':''}`))socket.emit('adminKickPlayer',{seat:i});
      }
      return;
    }
@@ -1509,6 +1516,15 @@ socket.on('movedToTable',({table})=>{
 });
 socket.on('adminMoveResult',r=>{
   if(r?.ok)alert(`${r.name} 님을 ${r.table}테이블 ${Number(r.seat)+1}번 자리로 이동했습니다.`);
+});
+socket.on('adminKickResult',r=>{
+  if(r?.ok)alert(`${r.name} 님을 ${r.table}테이블에서 강퇴했습니다.`);
+});
+socket.on('adminKicked',r=>{
+  mySeat=null;selected=null;pending=null;
+  try{localStorage.removeItem('blackjackSeat')}catch(e){}
+  alert(`방장에 의해 ${r?.table||''}테이블에서 강퇴되었습니다.`);
+  location.href=`${location.pathname}?table=${r?.table||tableId}&spectate=1`;
 });
 socket.on('seatLeft',()=>{
  mySeat=null;selected=null;pending=null;
@@ -1972,11 +1988,11 @@ function render(){
  for(let i=0;i<seatButtons.length;i++){
    const occupied=!!players[i];
    const eliminated=!!eliminatedSeats[i];
-   const adminCanMove=!!(occupied&&state.isAdmin&&!state.gameStarted&&!state.tournamentStarted&&['A','B'].includes(tableId));
-   const unavailable=eliminated||(occupied&&!adminCanMove);
+   const adminCanManage=!!(occupied&&state.isAdmin&&['A','B'].includes(tableId));
+   const unavailable=eliminated||(occupied&&!adminCanManage);
    seatButtons[i].classList.toggle('seatOccupied',occupied);
    seatButtons[i].classList.toggle('seatEliminated',eliminated);
-   seatButtons[i].classList.toggle('adminMoveSeat',adminCanMove);
+   seatButtons[i].classList.toggle('adminMoveSeat',adminCanManage);
    seatButtons[i].style.setProperty('display',unavailable?'none':'block','important');
    seatButtons[i].style.setProperty('visibility',unavailable?'hidden':'visible','important');
    seatButtons[i].style.pointerEvents=unavailable?'none':'auto';
@@ -1996,7 +2012,7 @@ function render(){
    const sx=seats[i][0],sy=seats[i][1];
    const owner=i===mySeat?' · YOU':'';
    const badge=playerBadge(p,i);
-   const adminMovable=state.isAdmin&&!state.gameStarted&&!state.tournamentStarted&&['A','B'].includes(tableId);
+   const adminMovable=state.isAdmin&&['A','B'].includes(tableId);
    html+=`<div class="occupied${adminMovable?' adminMovable':''}" data-player-seat="${i}" style="left:${sx}%;top:${sy+7.2}%">${escHTML(p.name)}${owner}<b>${money(p.bank)}</b><span class="playerStateBadge ${badge.cls}">${escHTML(badge.txt)}</span>${p.roundResult?`<span class="roundResult">${escHTML(p.roundResult)}</span>`:''}</div>`;
    if(p.hands&&p.hands.length){
      const allBust=p.hands.every(x=>x.state==='BUST');

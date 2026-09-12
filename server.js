@@ -18,7 +18,7 @@ const BET_SECONDS=15;
 const INSURANCE_SECONDS=10;
 
 app.use(express.static(__dirname));
-app.get('/health',(req,res)=>res.json({ok:true,version:'V41_AB_FINAL'}));
+app.get('/health',(req,res)=>res.json({ok:true,version:'V42_ADMIN_MANAGE_STABLE'}));
 
 function makeGame(tableId){return {
  tableId,
@@ -771,7 +771,20 @@ io.on('connection',socket=>{
  const requested=String(socket.handshake.query?.table||'A').toUpperCase();
  const tableId=['A','B','F'].includes(requested)?requested:'A';
  socket.data.tableId=tableId;
- const on=(event,handler)=>socket.on(event,(...args)=>runTable(tableId,()=>handler(...args)));
+ // 한 참가자의 잘못된/중복 요청이 예외를 내더라도 Node 프로세스 전체가
+ // 종료되어 A·B 참가자 전원이 동시에 끊기지 않도록 소켓 요청을 격리한다.
+ const on=(event,handler)=>socket.on(event,(...args)=>{
+   try{
+     const result=runTable(tableId,()=>handler(...args));
+     if(result&&typeof result.then==='function')result.catch(err=>{
+       console.error(`[${tableId}] socket ${event} async error`,err);
+       socket.emit('actionError','요청 처리 중 오류가 발생했습니다. 다시 눌러주세요.');
+     });
+   }catch(err){
+     console.error(`[${tableId}] socket ${event} error`,err);
+     socket.emit('actionError','요청 처리 중 오류가 발생했습니다. 다시 눌러주세요.');
+   }
+ });
  on('takeSeat',({seat,name,token})=>{
    if(clearStaleWaitingSeats())updateWaitingStatus();
    seat=Number(seat);name=String(name||'').trim().slice(0,12);token=String(token||'');
@@ -1056,6 +1069,40 @@ io.on('connection',socket=>{
    socket.emit('adminMoveResult',{ok:true,name:player.name,table:targetTable,seat:targetSeat});
  });
 
+ on('adminKickPlayer',({seat})=>{
+   if(!socket.data.isAdmin)return socket.emit('actionError','방장 권한이 필요합니다.');
+   if(!['A','B'].includes(tableId))return socket.emit('actionError','A·B테이블 참가자만 강퇴할 수 있습니다.');
+   seat=Number(seat);
+   const player=G.players[seat];
+   if(!player)return socket.emit('actionError','강퇴할 참가자가 없는 자리입니다.');
+
+   const wasCurrentTurn=G.gameStarted&&G.turnOrder[G.turnIndex]===seat;
+   const playerSocket=player.socketId?io.sockets.sockets.get(player.socketId):null;
+   if(G.tournamentStarted)reserveEliminatedSeat(seat,player,'방장 강퇴');
+   G.players[seat]=null;
+   if(playerSocket){
+     playerSocket.data.token='';
+     playerSocket.emit('adminKicked',{name:player.name,table:tableId});
+   }
+
+   G.status=`${player.name} · 방장 강퇴`;
+   updateWaitingStatus();broadcast();
+   socket.emit('adminKickResult',{ok:true,name:player.name,table:tableId,seat});
+
+   if(G.tournamentStarted&&!G.tournamentOver){
+     if(checkFinalWinner())return;
+     if(wasCurrentTurn){
+       stopTurnTimer();
+       G.activeHandIndex=0;
+       setTimeout(()=>runTable(tableId,advanceTurn),150);
+     }else if(!G.gameStarted){
+       armBettingClock();
+     }
+   }else{
+     armBettingClock();
+   }
+ });
+
  on('adminStopGame',()=>{
    if(!socket.data.isAdmin)return socket.emit('actionError','방장 권한이 필요합니다.');
    adminStopGame();
@@ -1102,4 +1149,4 @@ io.on('connection',socket=>{
  setTimeout(()=>runTable(tableId,()=>socket.emit('state',snapshotFor(socket))),50);
 });
 
-server.listen(PORT,'0.0.0.0',()=>console.log(`BLACKJACK BASAN V19 tournament multiplayer on ${PORT}`));
+server.listen(PORT,'0.0.0.0',()=>console.log(`BLACKJACK BASAN V42 admin-manage stable on ${PORT}`));
