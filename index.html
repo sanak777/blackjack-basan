@@ -1214,6 +1214,7 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
   <span class="watchLabel" id="watchLabel">관전</span>
   <button class="watchBtn" data-watch-table="A" type="button">A</button>
   <button class="watchBtn" data-watch-table="B" type="button">B</button>
+  <button class="watchBtn" data-watch-table="F" type="button" hidden>결승 관전</button>
 </nav>
 
 <div id="app">
@@ -2107,7 +2108,7 @@ function updateTableWatchNav(){
   nav.querySelectorAll('[data-watch-table]').forEach(btn=>{
     const id=btn.dataset.watchTable;
     btn.classList.toggle('active',id===tableId);
-    if(id==='F')btn.hidden=!state?.finalReady;
+    if(id==='F')btn.hidden=!state?.finalReady||!!state?.isQualifier;
   });
 }
 document.querySelectorAll('[data-watch-table]').forEach(btn=>btn.addEventListener('click',()=>{
