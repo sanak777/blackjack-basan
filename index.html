@@ -933,6 +933,21 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
 #adminStopBtn{background:#5a1717;color:#fff0f0;border:1px solid #c84d4d}
 #adminMsg{font-size:11px;margin-top:7px;color:#d7c79d}
 #adminCloseBtn{width:100%;margin-top:8px}
+#adminBox.adminDocked{left:auto;right:4.5%;top:2.1%;transform:none;pointer-events:auto}
+#adminBox.adminDocked #adminOpenBtn{display:none!important}
+#adminBox.adminDocked #adminPopup{display:contents}
+#adminBox.adminDocked .adminTitle,
+#adminBox.adminDocked #adminLoginRow,
+#adminBox.adminDocked #adminMsg,
+#adminBox.adminDocked #adminCloseBtn{display:none!important}
+#adminBox.adminDocked #adminControls{display:flex!important;gap:5px;margin:0;align-items:center}
+#adminBox.adminDocked #adminStartBtn,
+#adminBox.adminDocked #adminStopBtn{padding:7px 9px;border-radius:999px;font-size:10px;line-height:1.15;white-space:nowrap;box-shadow:0 4px 12px #0009}
+@media(max-width:700px){
+ #adminBox.adminDocked{right:2.8%;top:2.2%}
+ #adminBox.adminDocked #adminStartBtn,
+ #adminBox.adminDocked #adminStopBtn{padding:6px 7px;font-size:9px}
+}
 
 
 /* V39 개인 라운드 결과 팝업 */
@@ -1569,6 +1584,8 @@ function syncAdminVisibility(s){
   btn.style.display='';
   if(s?.isAdmin){
     adminLoggedIn=true;
+    $('#adminBox')?.classList.add('adminDocked');
+    popup?.classList.remove('show');
     btn.textContent='ADMIN ✓';
     btn.classList.add('adminOn');
     const row=$('#adminLoginRow'); if(row)row.style.display='none';
@@ -2126,6 +2143,8 @@ socket.on('adminLoginResult',r=>{
     alert(r?.msg||'방장 로그인 실패');return;
   }
   adminLoggedIn=true;
+  $('#adminBox')?.classList.add('adminDocked');
+  $('#adminPopup')?.classList.remove('show');
   if(r.adminSession){
     adminSessionKey=String(r.adminSession);
     localStorage.setItem('basan_admin_session',adminSessionKey);
