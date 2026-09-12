@@ -814,6 +814,12 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
 .tablePick{border:1px solid #9d8138;border-radius:999px;background:#111;color:#e8d188;padding:9px 18px;font-weight:900;cursor:pointer}
 .tablePick.active{background:linear-gradient(180deg,#cfae51,#8e6c1d);color:#090909;border-color:#efd77b}
 .tableGuide{margin:0 0 12px;color:#d9cfac;font-size:12px}
+#watchNav{position:fixed;z-index:160;top:7px;left:50%;transform:translateX(-50%);display:none;align-items:center;gap:5px;padding:5px 7px;border:1px solid #8e7431;border-radius:999px;background:rgba(5,8,7,.92);box-shadow:0 4px 18px #0008;white-space:nowrap}
+#watchNav.show{display:flex}
+#watchNav .watchLabel{color:#d8c27c;font-size:10px;font-weight:900;margin:0 3px}
+.watchBtn{border:1px solid #715e2b;border-radius:999px;background:#171810;color:#eadb9d;padding:6px 10px;font-size:11px;font-weight:900;cursor:pointer}
+.watchBtn.active{color:#111;background:#d2ad49;border-color:#f3db82}
+.watchBtn[hidden]{display:none}
 #enterTable{
   min-width:min(76vw,340px);padding:15px 30px;border-radius:999px;
   border:1px solid #f1d782;background:linear-gradient(180deg,#e0c369,#8b681d);
@@ -1179,6 +1185,13 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
   </div>
 </div>
 
+<nav id="watchNav" aria-label="테이블 관전 전환">
+  <span class="watchLabel" id="watchLabel">관전</span>
+  <button class="watchBtn" data-watch-table="A" type="button">A</button>
+  <button class="watchBtn" data-watch-table="B" type="button">B</button>
+  <button class="watchBtn" data-watch-table="F" type="button" hidden>결승</button>
+</nav>
+
 <div id="app">
  <div id="table">
   <div id="roundWinRoller" aria-live="polite">
@@ -1329,6 +1342,7 @@ function syncCountdownSound(seconds,active){
   }
 }
 let token=localStorage.getItem('blackjack_basan_token');
+let adminSessionKey=sessionStorage.getItem('basan_admin_session')||'';
 if(!token){
   token=(crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random().toString(36).slice(2));
   localStorage.setItem('blackjack_basan_token',token);
@@ -1400,6 +1414,15 @@ function openSeat(i){
  }
  const p=state.players[i];
  if(p){
+   if(state.isAdmin&&['A','B'].includes(tableId)&&!state.gameStarted&&!state.tournamentStarted){
+     const total=Number(state.tableCounts?.A||0)+Number(state.tableCounts?.B||0);
+     const targetTable=tableId==='A'?'B':'A';
+     if(total<=10&&targetTable==='B')return alert('10명 이하는 A테이블 단독 경기로 진행합니다.');
+     if(confirm(`${p.name} 님을 ${targetTable}테이블 빈자리로 이동할까요?`)){
+       socket.emit('adminMovePlayer',{seat:i,targetTable});
+     }
+     return;
+   }
    if(i===mySeat){
      if(state.gameStarted)return alert('게임 진행 중에는 닉네임을 수정할 수 없습니다.');
      showSeatModal(i);
@@ -1445,6 +1468,13 @@ socket.on('seatOk',({seat})=>{
  $('#join').classList.remove('show');
  $('#leaveSeat').style.display='none';
  $('#confirm').textContent='₩1,000,000 착석';
+});
+socket.on('movedToTable',({table})=>{
+  alert(`방장이 ${table||'A'}테이블로 자리를 이동했습니다.`);
+  location.href=`${location.pathname}?table=${table||'A'}`;
+});
+socket.on('adminMoveResult',r=>{
+  if(r?.ok)alert(`${r.name} 님을 ${r.table}테이블 ${Number(r.seat)+1}번 자리로 이동했습니다.`);
 });
 socket.on('seatLeft',()=>{
  mySeat=null;selected=null;pending=null;
@@ -1754,6 +1784,7 @@ socket.on('state',s=>{
  mySeat=s.mySeat;
  if(mySeat!==null) selected=mySeat;
  render();
+ updateTableWatchNav();
 });
 
 function handValue(cards){
@@ -2014,6 +2045,22 @@ function render(){
 }
 const introScreen=$('#introScreen');
 const enterTable=$('#enterTable');
+function updateTableWatchNav(){
+  const nav=$('#watchNav');if(!nav)return;
+  const allowed=!!(state?.isAdmin||state?.canSpectate||adminLoggedIn);
+  nav.classList.toggle('show',allowed);
+  const label=$('#watchLabel');if(label)label.textContent=(state?.isAdmin||adminLoggedIn)?'ADMIN 관전':'탈락자 관전';
+  nav.querySelectorAll('[data-watch-table]').forEach(btn=>{
+    const id=btn.dataset.watchTable;
+    btn.classList.toggle('active',id===tableId);
+    if(id==='F')btn.hidden=!state?.finalReady;
+  });
+}
+document.querySelectorAll('[data-watch-table]').forEach(btn=>btn.addEventListener('click',()=>{
+  const id=btn.dataset.watchTable;
+  if(id===tableId)return;
+  location.href=`${location.pathname}?table=${id}`;
+}));
 document.querySelectorAll('.tablePick').forEach(btn=>{
   const id=btn.dataset.table;
   btn.classList.toggle('active',id===tableId);
@@ -2038,7 +2085,10 @@ enterTable?.addEventListener('click',()=>{
   unlockSound();introScreen?.classList.add('hide');
   if(tableId==='F')socket.emit('finalEnter',{token});
 });
-socket.on('connect',()=>socket.emit('hello',{token}));
+socket.on('connect',()=>{
+  socket.emit('hello',{token});
+  if(adminSessionKey)socket.emit('adminResume',{adminSession:adminSessionKey});
+});
 
 let adminLoggedIn=false;
 
@@ -2058,6 +2108,10 @@ $('#adminLoginBtn')?.addEventListener('click',()=>{
 socket.on('adminLoginResult',r=>{
   if(!r?.ok){ alert(r?.msg||'방장 로그인 실패'); return; }
   adminLoggedIn=true;
+  if(r.adminSession){
+    adminSessionKey=String(r.adminSession);
+    sessionStorage.setItem('basan_admin_session',adminSessionKey);
+  }
   const row=$('#adminLoginRow'); if(row)row.style.display='none';
   const pw=$('#adminPassword'); if(pw)pw.value='';
   $('#adminControls')?.classList.add('show');
@@ -2069,6 +2123,7 @@ socket.on('adminLoginResult',r=>{
   }
   const m=$('#adminMsg');
   if(m)m.textContent='방장 접속 완료 · 다른 플레이어 화면에서는 ADMIN 숨김';
+  updateTableWatchNav();
 });
 
 $('#adminStartBtn')?.addEventListener('click',()=>{

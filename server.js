@@ -2,13 +2,15 @@ const express=require('express');
 const http=require('http');
 const {Server}=require('socket.io');
 const {AsyncLocalStorage}=require('async_hooks');
+const {randomUUID}=require('crypto');
 
 const app=express();
 const server=http.createServer(app);
 const io=new Server(server,{pingInterval:12000,pingTimeout:25000});
 const PORT=process.env.PORT||3000;
 const ADMIN_PASSWORD='8959';
-let activeAdminSocketId=null;
+let activeAdminSessionToken='';
+const adminSocketIds=new Set();
 const START=1000000;
 const WIN_TARGET=10000000;
 const MIN_BET=10000;
@@ -38,7 +40,7 @@ const G=new Proxy({}, {
  get:(_,key)=>games[currentTableId()][key],
  set:(_,key,value)=>{games[currentTableId()][key]=value;return true}
 });
-const tournament={mode:'WAITING',qualifiers:{A:null,B:null},finalReady:false};
+const tournament={mode:'WAITING',qualifiers:{A:null,B:null},finalReady:false,eliminatedTokens:new Set()};
 
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const moneySafe=n=>'₩'+Math.round(Number(n||0)).toLocaleString('ko-KR');
@@ -161,6 +163,7 @@ function reserveEliminatedSeat(i,p,reason='탈락'){
    reason,
    bank:Number(p?.bank||0)
  };
+ if(p?.token)tournament.eliminatedTokens.add(p.token);
 }
 function clearStaleWaitingSeats(){
  if(G.gameStarted)return false;
@@ -205,8 +208,9 @@ function snapshotFor(socket){
    qualifiers:{A:tournament.qualifiers.A?.name||'',B:tournament.qualifiers.B?.name||''},
    finalReady:tournament.finalReady,
    isQualifier:['A','B'].some(k=>tournament.qualifiers[k]?.token===socket.data.token),
-   adminActive:!!activeAdminSocketId,
-   isAdmin:activeAdminSocketId===socket.id
+   canSpectate:tournament.eliminatedTokens.has(String(socket.data.token||'')),
+   adminActive:!!activeAdminSessionToken,
+   isAdmin:adminSocketIds.has(socket.id)
  };
 }
 function broadcast(){
@@ -330,7 +334,7 @@ function resetCurrentTable(){
 
 function resetTournament(){
  for(const id of ['A','B','F'])runTable(id,resetCurrentTable);
- tournament.mode='WAITING';tournament.qualifiers={A:null,B:null};tournament.finalReady=false;
+ tournament.mode='WAITING';tournament.qualifiers={A:null,B:null};tournament.finalReady=false;tournament.eliminatedTokens=new Set();
  for(const s of io.sockets.sockets.values())s.data.token='';
  broadcastAll();io.emit('tournamentReset');
 }
@@ -1002,13 +1006,17 @@ io.on('connection',socket=>{
    if(String(password||'')!==ADMIN_PASSWORD){
      return socket.emit('adminLoginResult',{ok:false,msg:'비밀번호가 틀렸습니다.'});
    }
-   if(activeAdminSocketId && activeAdminSocketId!==socket.id){
-     return socket.emit('adminLoginResult',{ok:false,msg:'이미 방장이 접속해 있습니다.'});
-   }
-   activeAdminSocketId=socket.id;
+   if(!activeAdminSessionToken)activeAdminSessionToken=randomUUID();
+   adminSocketIds.add(socket.id);
    socket.data.isAdmin=true;
-   socket.emit('adminLoginResult',{ok:true});
-   broadcast();
+   socket.emit('adminLoginResult',{ok:true,adminSession:activeAdminSessionToken});
+   broadcastAll();
+ });
+ on('adminResume',({adminSession})=>{
+   if(!activeAdminSessionToken||String(adminSession||'')!==activeAdminSessionToken)return;
+   adminSocketIds.add(socket.id);socket.data.isAdmin=true;
+   socket.emit('adminLoginResult',{ok:true,adminSession:activeAdminSessionToken,resumed:true});
+   broadcastAll();
  });
 
  on('adminStartGame',()=>{
@@ -1017,15 +1025,40 @@ io.on('connection',socket=>{
    if(!r.ok)socket.emit('actionError',r.msg);
  });
 
+ on('adminMovePlayer',({seat,targetTable})=>{
+   if(!socket.data.isAdmin)return socket.emit('actionError','방장 권한이 필요합니다.');
+   targetTable=String(targetTable||'').toUpperCase();
+   if(!['A','B'].includes(tableId)||!['A','B'].includes(targetTable)||targetTable===tableId){
+     return socket.emit('actionError','A·B테이블 사이에서만 참가자를 이동할 수 있습니다.');
+   }
+   seat=Number(seat);
+   const total=games.A.players.filter(Boolean).length+games.B.players.filter(Boolean).length;
+   if(total<=10&&targetTable==='B')return socket.emit('actionError','10명 이하는 A테이블 단독 경기로 진행합니다.');
+   if(games.A.tournamentStarted||games.B.tournamentStarted||games.A.gameStarted||games.B.gameStarted){
+     return socket.emit('actionError','게임 시작 후에는 참가자를 이동할 수 없습니다.');
+   }
+   const player=G.players[seat];
+   if(!player)return socket.emit('actionError','이동할 참가자가 없는 자리입니다.');
+   const targetGame=games[targetTable];
+   let targetSeat=!targetGame.players[seat]?seat:targetGame.players.findIndex(x=>!x);
+   if(targetSeat<0)return socket.emit('actionError',`${targetTable}테이블에 빈자리가 없습니다.`);
+   G.players[seat]=null;
+   targetGame.players[targetSeat]=player;
+   const playerSocket=io.sockets.sockets.get(player.socketId);
+   if(playerSocket)playerSocket.emit('movedToTable',{table:targetTable,seat:targetSeat});
+   runTable(targetTable,()=>{updateWaitingStatus();broadcast()});
+   updateWaitingStatus();broadcast();
+   socket.emit('adminMoveResult',{ok:true,name:player.name,table:targetTable,seat:targetSeat});
+ });
+
  on('adminStopGame',()=>{
    if(!socket.data.isAdmin)return socket.emit('actionError','방장 권한이 필요합니다.');
    adminStopGame();
  });
  on('disconnect',()=>{
-   if(activeAdminSocketId===socket.id){
-     activeAdminSocketId=null;
-     socket.data.isAdmin=false;
-     setTimeout(()=>broadcast(),0);
+   if(adminSocketIds.has(socket.id)){
+     adminSocketIds.delete(socket.id);socket.data.isAdmin=false;
+     setTimeout(()=>broadcastAll(),0);
    }
    const i=G.players.findIndex(p=>p&&p.socketId===socket.id);
    if(i>=0){
