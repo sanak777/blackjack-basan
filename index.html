@@ -1306,6 +1306,7 @@ const money=n=>'₩'+Number(n||0).toLocaleString('ko-KR');
 const $=s=>document.querySelector(s);
 const urlParams=new URLSearchParams(location.search);
 const tableId=['A','B','F'].includes(String(urlParams.get('table')||'A').toUpperCase())?String(urlParams.get('table')||'A').toUpperCase():'A';
+const adminView=urlParams.get('adminview')==='1';
 const socket=io({query:{table:tableId}});
 let state={players:Array(10).fill(null),eliminatedSeats:Array(10).fill(null),dealerHand:[],gameStarted:false,dealing:false,settling:false,tournamentStarted:false,tournamentOver:false,winnerName:'',roundNo:1,status:'서버 연결 중...',turnSeat:null,activeHandIndex:0,serverNow:Date.now(),betSeconds:15,insuranceOpen:false,insuranceDeadline:null,insuranceSeconds:10};
 let selected=null,pending=null,selectedChipValue=0;
@@ -1342,7 +1343,7 @@ function syncCountdownSound(seconds,active){
   }
 }
 let token=localStorage.getItem('blackjack_basan_token');
-let adminSessionKey=sessionStorage.getItem('basan_admin_session')||'';
+let adminSessionKey=localStorage.getItem('basan_admin_session')||'';
 if(!token){
   token=(crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random().toString(36).slice(2));
   localStorage.setItem('blackjack_basan_token',token);
@@ -2049,7 +2050,14 @@ function updateTableWatchNav(){
   const nav=$('#watchNav');if(!nav)return;
   const allowed=!!(state?.isAdmin||state?.canSpectate||adminLoggedIn);
   nav.classList.toggle('show',allowed);
-  const label=$('#watchLabel');if(label)label.textContent=(state?.isAdmin||adminLoggedIn)?'ADMIN 관전':'탈락자 관전';
+  const label=$('#watchLabel');
+  if(label)label.textContent=(state?.isAdmin||adminLoggedIn)
+    ?`ADMIN · ${state?.mySeat!==null?'참가':'관전'}`
+    :'탈락자 관전';
+  if(state?.tableLabel){
+    const role=state?.mySeat!==null?'참가':'관전';
+    document.title=`BLACKJACK · ${state.tableLabel} · ${role}`;
+  }
   nav.querySelectorAll('[data-watch-table]').forEach(btn=>{
     const id=btn.dataset.watchTable;
     btn.classList.toggle('active',id===tableId);
@@ -2091,6 +2099,8 @@ socket.on('connect',()=>{
 });
 
 let adminLoggedIn=false;
+let pendingAdminWindow=null;
+let pendingAdminTarget='';
 
 $('#adminOpenBtn')?.addEventListener('click',()=>{
   $('#adminPopup')?.classList.add('show');
@@ -2102,15 +2112,31 @@ $('#adminCloseBtn')?.addEventListener('click',()=>{
 $('#adminLoginBtn')?.addEventListener('click',()=>{
   const password=String($('#adminPassword')?.value||'').trim();
   if(!password){ alert('방장 비밀번호를 입력해주세요.'); return; }
+  if(['A','B'].includes(tableId)){
+    pendingAdminTarget=tableId==='A'?'B':'A';
+    pendingAdminWindow=window.open('about:blank',`basan_admin_${pendingAdminTarget}`);
+  }
   socket.emit('adminLogin',{password});
 });
 
 socket.on('adminLoginResult',r=>{
-  if(!r?.ok){ alert(r?.msg||'방장 로그인 실패'); return; }
+  if(!r?.ok){
+    try{pendingAdminWindow?.close()}catch(e){}
+    pendingAdminWindow=null;pendingAdminTarget='';
+    alert(r?.msg||'방장 로그인 실패');return;
+  }
   adminLoggedIn=true;
   if(r.adminSession){
     adminSessionKey=String(r.adminSession);
-    sessionStorage.setItem('basan_admin_session',adminSessionKey);
+    localStorage.setItem('basan_admin_session',adminSessionKey);
+  }
+  if(adminView||r.resumed)introScreen?.classList.add('hide');
+  if(pendingAdminWindow&&pendingAdminTarget){
+    const targetUrl=`${location.origin}${location.pathname}?table=${pendingAdminTarget}&adminview=1`;
+    try{pendingAdminWindow.location.replace(targetUrl)}catch(e){}
+    pendingAdminWindow=null;pendingAdminTarget='';
+  }else if(!r.resumed&&['A','B'].includes(tableId)&&!pendingAdminWindow){
+    const m=$('#adminMsg');if(m)m.textContent='팝업이 차단되면 상단 A/B 버튼으로 두 번째 화면을 열어주세요.';
   }
   const row=$('#adminLoginRow'); if(row)row.style.display='none';
   const pw=$('#adminPassword'); if(pw)pw.value='';
@@ -2122,7 +2148,7 @@ socket.on('adminLoginResult',r=>{
     openBtn.classList.add('adminOn');
   }
   const m=$('#adminMsg');
-  if(m)m.textContent='방장 접속 완료 · 다른 플레이어 화면에서는 ADMIN 숨김';
+  if(m&&!m.textContent.includes('팝업'))m.textContent='방장 접속 완료 · A/B 두 화면 관리자 권한 연결';
   updateTableWatchNav();
 });
 
