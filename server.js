@@ -3,6 +3,8 @@ const http=require('http');
 const {Server}=require('socket.io');
 const {AsyncLocalStorage}=require('async_hooks');
 const {randomUUID}=require('crypto');
+const fs=require('fs');
+const path=require('path');
 
 const app=express();
 const server=http.createServer(app);
@@ -16,9 +18,11 @@ const WIN_TARGET=10000000;
 const MIN_BET=10000;
 const BET_SECONDS=15;
 const INSURANCE_SECONDS=10;
+const RUNTIME_STATE_FILE=process.env.RUNTIME_STATE_PATH||path.join('/tmp','blackjack-basan-runtime-state.json');
+let runtimeSaveTimer=null;
 
 app.use(express.static(__dirname));
-app.get('/health',(req,res)=>res.json({ok:true,version:'V42_ADMIN_MANAGE_STABLE'}));
+app.get('/health',(req,res)=>res.json({ok:true,version:'V44_RESTART_RECOVERY'}));
 
 function makeGame(tableId){return {
  tableId,
@@ -33,7 +37,7 @@ function makeGame(tableId){return {
  insuranceOpen:false,insuranceDeadline:null,
  resultShowUntil:0
 }}
-const games={A:makeGame('A'),B:makeGame('B'),F:makeGame('F')};
+let games={A:makeGame('A'),B:makeGame('B'),F:makeGame('F')};
 const tableContext=new AsyncLocalStorage();
 const currentTableId=()=>tableContext.getStore()?.tableId||'A';
 const runTable=(tableId,fn)=>tableContext.run({tableId},fn);
@@ -42,6 +46,59 @@ const G=new Proxy({}, {
  set:(_,key,value)=>{games[currentTableId()][key]=value;return true}
 });
 const tournament={mode:'WAITING',qualifiers:{A:null,B:null},finalReady:false,eliminatedTokens:new Set()};
+
+function serializableGame(game){
+ const copy={...game,countdown:null,betTimer:null,turnTimer:null,insuranceTimer:null};
+ copy.players=(game.players||[]).map(p=>p?{...p,socketId:null,connected:false}:null);
+ return copy;
+}
+function saveRuntimeStateNow(){
+ try{
+   const payload={savedAt:Date.now(),games:Object.fromEntries(Object.entries(games).map(([id,g])=>[id,serializableGame(g)])),tournament:{...tournament,eliminatedTokens:[...tournament.eliminatedTokens]}};
+   const temp=`${RUNTIME_STATE_FILE}.tmp`;
+   fs.writeFileSync(temp,JSON.stringify(payload));
+   fs.renameSync(temp,RUNTIME_STATE_FILE);
+ }catch(err){console.error('runtime state save failed',err)}
+}
+function queueRuntimeSave(){
+ if(runtimeSaveTimer)return;
+ runtimeSaveTimer=setTimeout(()=>{runtimeSaveTimer=null;saveRuntimeStateNow()},120);
+}
+function restoreRuntimeState(){
+ try{
+   if(!fs.existsSync(RUNTIME_STATE_FILE))return false;
+   const saved=JSON.parse(fs.readFileSync(RUNTIME_STATE_FILE,'utf8'));
+   if(!saved?.games)return false;
+   for(const id of ['A','B','F']){
+     const src=saved.games[id];if(!src)continue;
+     const restored=Object.assign(makeGame(id),src,{countdown:null,betTimer:null,turnTimer:null,insuranceTimer:null});
+     restored.players=(restored.players||Array(10).fill(null)).map(p=>p?{...p,socketId:null,connected:false,disconnectedAt:Date.now()}:null);
+     // 정산 전 서버가 재시작됐다면 해당 라운드는 무효로 하고 시작 전 보유금으로 복구한다.
+     if((restored.gameStarted||restored.dealing||restored.settling)&&!restored.roundSettled){
+       for(const p of restored.players){
+         if(!p)continue;
+         if(p.roundStartBank!==null&&p.roundStartBank!==undefined)p.bank=p.roundStartBank;
+         p.bet={main:0,pair:0,trio:0};p.betLast={main:0,pair:0,trio:0};p.history=[];
+         p.confirmed=false;p.autoConfirmed=false;p.betDeadline=null;p.betState='WAITING_BET';
+         p.hands=[];p.initialCards=[];p.inRound=false;p.insuranceBet=0;p.insuranceDecision=null;
+         p.roundStartBank=null;p.roundStake=0;p.roundNet=0;p.roundResult='';p.roundResultKind='';p.roundResultAmount=0;
+       }
+       restored.gameStarted=false;restored.dealing=false;restored.settling=false;restored.roundSettled=false;
+       restored.dealerHand=[];restored.hideHole=false;restored.turnOrder=[];restored.turnIndex=0;restored.activeHandIndex=0;
+       restored.status='서버 재연결 완료 · 중단 라운드 환불 · 베팅 재개';
+     }
+     games[id]=restored;
+   }
+   if(saved.tournament){
+     tournament.mode=saved.tournament.mode||'WAITING';
+     tournament.qualifiers=saved.tournament.qualifiers||{A:null,B:null};
+     tournament.finalReady=!!saved.tournament.finalReady;
+     tournament.eliminatedTokens=new Set(saved.tournament.eliminatedTokens||[]);
+   }
+   console.log('runtime state restored');return true;
+ }catch(err){console.error('runtime state restore failed',err);return false}
+}
+const restoredAtBoot=restoreRuntimeState();
 
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const moneySafe=n=>'₩'+Math.round(Number(n||0)).toLocaleString('ko-KR');
@@ -220,6 +277,7 @@ function broadcast(){
  for(const s of io.sockets.sockets.values()){
    if(s.data.tableId===tableId)s.emit('state',snapshotFor(s));
  }
+ queueRuntimeSave();
 }
 function broadcastAll(){for(const id of ['A','B','F'])runTable(id,broadcast)}
 function remainingBetSeconds(){
@@ -307,6 +365,22 @@ function checkTargetWinner(){
  G.status=`🏆 ${winner.p.name} ${moneySafe(winner.p.bank)} · 목표 ${moneySafe(WIN_TARGET)} 달성 · 최종 우승`;
  finishTournament(winner);
  return true;
+}
+
+// 결승에서 두 참가자가 같은 라운드에 전액 올인 후 모두 패배한 특수 상황만
+// 마지막 패의 21 근접도로 결정한다. 일반 잔액 부족 탈락 판정에는 사용하지 않는다.
+function finalAllInLossRank(p){
+ const hands=(p?.hands||[]).filter(h=>Array.isArray(h.cards)&&h.cards.length);
+ const valid=hands.map(h=>handValue(h.cards)).filter(v=>v<=21);
+ if(valid.length)return {category:2,score:Math.max(...valid)};
+ const bust=hands.map(h=>handValue(h.cards)).filter(v=>v>21);
+ if(bust.length)return {category:1,score:-Math.min(...bust.map(v=>v-21))};
+ return {category:0,score:-Infinity};
+}
+function isFinalAllInRoundLoss(p){
+ if(!p||Number(p.bank||0)!==0||Number(p.roundStake||0)<=0)return false;
+ const hands=p.hands||[];
+ return hands.length>0&&hands.every(h=>h.result==='LOSE'||h.result==='BUST'||h.state==='BUST'||handValue(h.cards)>21);
 }
 
 function resetCurrentTable(){
@@ -733,7 +807,18 @@ function nextRound(){
  const survivors=before.filter(({p})=>!p.eliminatedPending&&p.bank>=MIN_BET);
 
  if(survivors.length===0&&before.length){
-   const fallback=[...before].sort((a,b)=>b.p.bank-a.p.bank||a.i-b.i)[0];
+   let fallback;
+   const finalDoubleAllInLoss=currentTableId()==='F'&&before.length===2&&before.every(({p})=>isFinalAllInRoundLoss(p));
+   if(finalDoubleAllInLoss){
+     fallback=[...before].sort((a,b)=>{
+       const ar=finalAllInLossRank(a.p),br=finalAllInLossRank(b.p);
+       return br.category-ar.category||br.score-ar.score||a.i-b.i;
+     })[0];
+     const winnerRank=finalAllInLossRank(fallback.p);
+     G.status=`결승 동시 올인 패배 · 마지막 패 ${winnerRank.category===2?winnerRank.score:21-winnerRank.score} 비교 · ${fallback.p.name} 우승`;
+   }else{
+     fallback=[...before].sort((a,b)=>b.p.bank-a.p.bank||a.i-b.i)[0];
+   }
    return finishTournament(fallback);
  }
  if(survivors.length===1){
@@ -1149,4 +1234,23 @@ io.on('connection',socket=>{
  setTimeout(()=>runTable(tableId,()=>socket.emit('state',snapshotFor(socket))),50);
 });
 
-server.listen(PORT,'0.0.0.0',()=>console.log(`BLACKJACK BASAN V42 admin-manage stable on ${PORT}`));
+process.on('uncaughtException',err=>{
+ console.error('uncaught exception - saving state for restart',err);
+ saveRuntimeStateNow();
+ setTimeout(()=>process.exit(1),100);
+});
+process.on('unhandledRejection',err=>{
+ console.error('unhandled rejection - saving state for restart',err);
+ saveRuntimeStateNow();
+ setTimeout(()=>process.exit(1),100);
+});
+process.on('SIGTERM',()=>{saveRuntimeStateNow();process.exit(0)});
+
+server.listen(PORT,'0.0.0.0',()=>{
+ console.log(`BLACKJACK BASAN V44 restart-recovery on ${PORT}`);
+ if(restoredAtBoot){
+   for(const id of ['A','B','F'])runTable(id,()=>{
+     if(G.tournamentStarted&&!G.tournamentOver&&!G.gameStarted&&alivePlayers().length>1)armBettingClock();
+   });
+ }
+});
