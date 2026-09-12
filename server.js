@@ -25,6 +25,7 @@ function makeGame(tableId){return {
  players:Array(10).fill(null),
  eliminatedSeats:Array(10).fill(null),
  gameStarted:false,dealing:false,settling:false,
+ roundSettled:false,
  tournamentStarted:false,tournamentOver:false,winnerName:'',
  roundNo:1,dealerHand:[],deck:[],turnOrder:[],turnIndex:0,activeHandIndex:0,
  status:`${tableId==='F'?'결승':tableId+'테이블'} · 방장 게임 시작 대기 · 0 / ${tableId==='F'?2:10}`,
@@ -185,6 +186,7 @@ function publicPlayer(p){
 }
 function snapshotFor(socket){
  const mySeat=byToken(socket.data.token);
+ const publicMySeat=mySeat>=0?mySeat:null;
  let turnSeat=G.turnIndex<G.turnOrder.length?G.turnOrder[G.turnIndex]:null;
  let p=turnSeat!==null?G.players[turnSeat]:null,h=p&&p.hands?p.hands[G.activeHandIndex]:null;
  return {
@@ -201,7 +203,7 @@ function snapshotFor(socket){
    insuranceDeadline:G.insuranceDeadline,
    insuranceSeconds:INSURANCE_SECONDS,
    resultShowUntil:G.resultShowUntil||0,
-   mySeat,serverNow:Date.now(),betSeconds:BET_SECONDS,
+   mySeat:publicMySeat,serverNow:Date.now(),betSeconds:BET_SECONDS,
    tableId:currentTableId(),tableLabel:currentTableId()==='F'?'결승 테이블':`${currentTableId()} 테이블`,
    tournamentMode:tournament.mode,
    tableCounts:{A:games.A.players.filter(Boolean).length,B:games.B.players.filter(Boolean).length},
@@ -286,6 +288,7 @@ function prepareFinal(){
  games.F=finalGame;tournament.finalReady=true;
 }
 function checkFinalWinner(){
+ if(currentTableId()==='F'&&!G.roundSettled)return false;
  const alive=aliveEntries();
  if(G.tournamentStarted&&alive.length===1){finishTournament(alive[0]);return true}
  return false;
@@ -314,6 +317,7 @@ function resetCurrentTable(){
  G.gameStarted=false;
  G.dealing=false;
  G.settling=false;
+ G.roundSettled=false;
  G.tournamentStarted=false;
  G.tournamentOver=false;
  G.winnerName='';
@@ -484,7 +488,7 @@ async function startRound(){
  const alive=alivePlayers();
  if(!G.tournamentStarted||alive.length<1)return;
  G.tournamentStarted=true;
- G.gameStarted=true;G.dealing=true;G.settling=false;G.dealerHand=[];
+ G.gameStarted=true;G.dealing=true;G.settling=false;G.roundSettled=false;G.dealerHand=[];
  // Keep one continuous two-deck shoe. Shuffle before a round when the cut-card
  // point is reached; player seats, bankrolls and tournament state stay intact.
  if(G.deck.length<26)G.deck=makeDeck();
@@ -701,7 +705,7 @@ function settle(){
    p.roundResultAmount=Math.abs(p.roundNet);
    p.roundResultKind=p.roundNet>0?'WIN':(p.roundNet<0?'LOSE':'PUSH');
  }
- G.settling=false;
+ G.settling=false;G.roundSettled=true;
 
  // 정산이 모두 끝난 시점의 실제 보유금으로 목표 우승 판정.
  // 10,000,000원 이상이 여러 명이면 그중(=전체 생존자 중) 보유금 최고액 1명이 즉시 우승.
@@ -758,6 +762,7 @@ function nextRound(){
    p.insuranceBet=0;p.insuranceDecision=null;
    p.roundStartBank=null;p.roundStake=0;p.roundNet=0;p.roundResultKind='';p.roundResultAmount=0;
  }
+ G.roundSettled=false;
  updateWaitingStatus();broadcast();
  armBettingClock();
 }

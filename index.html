@@ -1336,6 +1336,7 @@ const $=s=>document.querySelector(s);
 const urlParams=new URLSearchParams(location.search);
 const tableId=['A','B','F'].includes(String(urlParams.get('table')||'A').toUpperCase())?String(urlParams.get('table')||'A').toUpperCase():'A';
 const adminView=urlParams.get('adminview')==='1';
+const spectatorView=urlParams.get('spectate')==='1';
 const socket=io({query:{table:tableId}});
 let state={players:Array(10).fill(null),eliminatedSeats:Array(10).fill(null),dealerHand:[],gameStarted:false,dealing:false,settling:false,tournamentStarted:false,tournamentOver:false,winnerName:'',roundNo:1,status:'서버 연결 중...',turnSeat:null,activeHandIndex:0,serverNow:Date.now(),betSeconds:15,insuranceOpen:false,insuranceDeadline:null,insuranceSeconds:10};
 let selected=null,pending=null,selectedChipValue=0;
@@ -2093,7 +2094,7 @@ const introScreen=$('#introScreen');
 const enterTable=$('#enterTable');
 function updateTableWatchNav(){
   const nav=$('#watchNav');if(!nav)return;
-  const allowed=!!(state?.isAdmin||state?.canSpectate||adminLoggedIn);
+  const allowed=!!(state?.isAdmin||state?.canSpectate||state?.mySeat!==null||adminLoggedIn||spectatorView);
   nav.classList.toggle('show',allowed);
   const label=$('#watchLabel');
   if(label)label.textContent=(state?.isAdmin||adminLoggedIn)
@@ -2112,7 +2113,11 @@ function updateTableWatchNav(){
 document.querySelectorAll('[data-watch-table]').forEach(btn=>btn.addEventListener('click',()=>{
   const id=btn.dataset.watchTable;
   if(id===tableId)return;
-  location.href=`${location.pathname}?table=${id}`;
+  if(state?.mySeat!==null&&state?.mySeat!==undefined){
+    window.open(`${location.pathname}?table=${id}&spectate=1`,`basan_player_watch_${id}`);
+  }else{
+    location.href=`${location.pathname}?table=${id}&spectate=1`;
+  }
 }));
 document.querySelectorAll('.tablePick').forEach(btn=>{
   const id=btn.dataset.table;
@@ -2127,6 +2132,7 @@ if(tableId==='F'){
   const guide=$('#tableGuide');if(guide)guide.textContent='A테이블 우승자 VS B테이블 우승자 · 1대1 결승';
   if(enterTable)enterTable.textContent='결승 테이블 입장';
 }
+if(spectatorView)introScreen?.classList.add('hide');
 if(introScreen && $('#bg')){
   const syncIntroBg=()=>{
     const src=$('#bg').getAttribute('src');
