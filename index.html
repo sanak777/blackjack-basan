@@ -39,9 +39,9 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
 }
 .seatHit:active{box-shadow:0 0 0 3px #ffe06e,0 0 22px #ffd54f}
 .seatHit.selected{box-shadow:0 0 0 3px #ffe06e,0 0 25px #ffd54f}
-.seatHit.adminMoveSeat{display:block!important;visibility:visible!important;pointer-events:auto!important;z-index:88;border-color:#f0c956;background:rgba(21,64,36,.82);box-shadow:0 0 0 2px rgba(240,201,86,.45),0 4px 14px #0009}
-.seatHit.adminMoveSeat:after{content:"이동";position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);color:#fff2a8;font-size:10px;font-weight:1000;text-shadow:0 1px 3px #000}
-.occupied.adminMovable{pointer-events:auto!important;cursor:pointer;outline:1px solid rgba(240,201,86,.65);outline-offset:3px}
+.seatHit.adminMoveSeat{display:block!important;visibility:visible!important;pointer-events:auto!important;z-index:88;opacity:0!important;background:transparent!important;box-shadow:none!important}
+.seatHit.adminMoveSeat:after{content:""!important;display:none!important}
+.occupied.adminMovable{pointer-events:auto!important;cursor:pointer}
 .occupied{
  position:absolute;transform:translate(-50%,-50%);
  z-index:40;pointer-events:none;text-align:center;
@@ -817,12 +817,13 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
 .tablePick{border:1px solid #9d8138;border-radius:999px;background:#111;color:#e8d188;padding:9px 18px;font-weight:900;cursor:pointer}
 .tablePick.active{background:linear-gradient(180deg,#cfae51,#8e6c1d);color:#090909;border-color:#efd77b}
 .tableGuide{margin:0 0 12px;color:#d9cfac;font-size:12px}
-#watchNav{position:fixed;z-index:160;top:7px;left:50%;transform:translateX(-50%);display:none;align-items:center;gap:5px;padding:5px 7px;border:1px solid #8e7431;border-radius:999px;background:rgba(5,8,7,.92);box-shadow:0 4px 18px #0008;white-space:nowrap}
+#watchNav{position:fixed;z-index:160;top:7px;left:35%;transform:translateX(-50%);display:none;align-items:center;gap:5px;padding:5px 7px;border:1px solid #8e7431;border-radius:999px;background:rgba(5,8,7,.92);box-shadow:0 4px 18px #0008;white-space:nowrap}
 #watchNav.show{display:flex}
 #watchNav .watchLabel{color:#d8c27c;font-size:10px;font-weight:900;margin:0 3px}
 .watchBtn{border:1px solid #715e2b;border-radius:999px;background:#171810;color:#eadb9d;padding:6px 10px;font-size:11px;font-weight:900;cursor:pointer}
 .watchBtn.active{color:#111;background:#d2ad49;border-color:#f3db82}
 .watchBtn[hidden]{display:none}
+@media(max-width:700px){#watchNav{left:23%;top:7px;transform:translateX(-50%) scale(.88);transform-origin:center top}}
 #enterTable{
   min-width:min(76vw,340px);padding:15px 30px;border-radius:999px;
   border:1px solid #f1d782;background:linear-gradient(180deg,#e0c369,#8b681d);
