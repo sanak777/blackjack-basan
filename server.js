@@ -375,12 +375,11 @@ function adminStartGame(){
 function startTournamentByAttendance(){
  const a=games.A.players.filter(Boolean).length,b=games.B.players.filter(Boolean).length,total=a+b;
  if(total<1)return {ok:false,msg:'참가자가 1명 이상 착석해야 시작할 수 있습니다.'};
- if(total<=10){
-   if(b>0)return {ok:false,msg:'10명 이하 단독 경기는 A테이블에서 진행합니다. B테이블 참가자는 A테이블로 이동해주세요.'};
+ if(b===0){
    tournament.mode='SINGLE';
    return runTable('A',adminStartGame);
  }
- if(a<1||b<1)return {ok:false,msg:'11명 이상은 A·B테이블에 나누어 착석해야 합니다.'};
+ if(a<1)return {ok:false,msg:'A테이블에 참가자가 1명 이상 있어야 A·B 예선을 시작할 수 있습니다.'};
  tournament.mode='SPLIT';
  const ra=runTable('A',adminStartGame),rb=runTable('B',adminStartGame);
  broadcastAll();
@@ -1032,8 +1031,6 @@ io.on('connection',socket=>{
      return socket.emit('actionError','A·B테이블 사이에서만 참가자를 이동할 수 있습니다.');
    }
    seat=Number(seat);
-   const total=games.A.players.filter(Boolean).length+games.B.players.filter(Boolean).length;
-   if(total<=10&&targetTable==='B')return socket.emit('actionError','10명 이하는 A테이블 단독 경기로 진행합니다.');
    if(games.A.tournamentStarted||games.B.tournamentStarted||games.A.gameStarted||games.B.gameStarted){
      return socket.emit('actionError','게임 시작 후에는 참가자를 이동할 수 없습니다.');
    }

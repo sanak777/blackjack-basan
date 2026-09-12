@@ -1194,7 +1194,7 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
       <button class="tablePick" data-table="A" type="button">A 테이블</button>
       <button class="tablePick" data-table="B" type="button">B 테이블</button>
     </div>
-    <div class="tableGuide" id="tableGuide">10명 이하는 A테이블 · 11명부터 A/B 예선</div>
+    <div class="tableGuide" id="tableGuide">B가 비면 A 단독 · A/B 모두 참가자가 있으면 두 테이블 예선</div>
     <button id="enterTable" type="button">게임 참가 · ENTER TABLE</button>
     <div class="introNote">방장 START · 바이인 ₩1,000,000 · A/B 우승자는 1대1 결승</div>
   </div>
@@ -1431,9 +1431,7 @@ function openSeat(i){
  const p=state.players[i];
  if(p){
    if(state.isAdmin&&['A','B'].includes(tableId)&&!state.gameStarted&&!state.tournamentStarted){
-     const total=Number(state.tableCounts?.A||0)+Number(state.tableCounts?.B||0);
      const targetTable=tableId==='A'?'B':'A';
-     if(total<=10&&targetTable==='B')return alert('10명 이하는 A테이블 단독 경기로 진행합니다.');
      if(confirm(`${p.name} 님을 ${targetTable}테이블 빈자리로 이동할까요?`)){
        socket.emit('adminMovePlayer',{seat:i,targetTable});
      }
