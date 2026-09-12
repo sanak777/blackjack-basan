@@ -810,6 +810,10 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
 .introSub{margin:13px 0 0;color:#e9e4d5;font-size:clamp(13px,2vw,19px);font-weight:800;letter-spacing:.1em}
 .introSuits{margin:19px 0 22px;font:900 clamp(22px,4vw,34px) Georgia,serif;letter-spacing:.32em;color:#eee}
 .introSuits .red{color:#c83945}
+.tablePicker{display:flex;gap:9px;justify-content:center;margin:0 0 14px}
+.tablePick{border:1px solid #9d8138;border-radius:999px;background:#111;color:#e8d188;padding:9px 18px;font-weight:900;cursor:pointer}
+.tablePick.active{background:linear-gradient(180deg,#cfae51,#8e6c1d);color:#090909;border-color:#efd77b}
+.tableGuide{margin:0 0 12px;color:#d9cfac;font-size:12px}
 #enterTable{
   min-width:min(76vw,340px);padding:15px 30px;border-radius:999px;
   border:1px solid #f1d782;background:linear-gradient(180deg,#e0c369,#8b681d);
@@ -1165,8 +1169,13 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
     <h1 class="introTitle">BLACKJACK</h1>
     <div class="introSub">BASAN · VIP CHAMPIONSHIP</div>
     <div class="introSuits">♠ <span class="red">♥</span> <span class="red">♦</span> ♣</div>
+    <div class="tablePicker" id="tablePicker">
+      <button class="tablePick" data-table="A" type="button">A 테이블</button>
+      <button class="tablePick" data-table="B" type="button">B 테이블</button>
+    </div>
+    <div class="tableGuide" id="tableGuide">10명 이하는 A테이블 · 11명부터 A/B 예선</div>
     <button id="enterTable" type="button">게임 참가 · ENTER TABLE</button>
-    <div class="introNote">방장 START로 시작 · 고정 바이인 ₩1,000,000 · 최후 1인 토너먼트</div>
+    <div class="introNote">방장 START · 바이인 ₩1,000,000 · A/B 우승자는 1대1 결승</div>
   </div>
 </div>
 
@@ -1282,7 +1291,9 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
 const START=1000000;
 const money=n=>'₩'+Number(n||0).toLocaleString('ko-KR');
 const $=s=>document.querySelector(s);
-const socket=io();
+const urlParams=new URLSearchParams(location.search);
+const tableId=['A','B','F'].includes(String(urlParams.get('table')||'A').toUpperCase())?String(urlParams.get('table')||'A').toUpperCase():'A';
+const socket=io({query:{table:tableId}});
 let state={players:Array(10).fill(null),eliminatedSeats:Array(10).fill(null),dealerHand:[],gameStarted:false,dealing:false,settling:false,tournamentStarted:false,tournamentOver:false,winnerName:'',roundNo:1,status:'서버 연결 중...',turnSeat:null,activeHandIndex:0,serverNow:Date.now(),betSeconds:15,insuranceOpen:false,insuranceDeadline:null,insuranceSeconds:10};
 let selected=null,pending=null,selectedChipValue=0;
 let dealerHoleWasHidden=false;
@@ -1735,6 +1746,10 @@ socket.on('state',s=>{
  maybePlayDealSound(s);
  announceBlackjackChanges(s,state);
  state=s;
+ if(tableId!=='F'&&s.finalReady&&s.isQualifier&&!sessionStorage.getItem('basan_final_move')){
+   sessionStorage.setItem('basan_final_move','1');
+   setTimeout(()=>{location.href=`${location.pathname}?table=F`},1600);
+ }
  state.revealDealerIndex=revealDealerIndex;
  mySeat=s.mySeat;
  if(mySeat!==null) selected=mySeat;
@@ -1999,6 +2014,19 @@ function render(){
 }
 const introScreen=$('#introScreen');
 const enterTable=$('#enterTable');
+document.querySelectorAll('.tablePick').forEach(btn=>{
+  const id=btn.dataset.table;
+  btn.classList.toggle('active',id===tableId);
+  btn.addEventListener('click',()=>{
+    if(id===tableId)return;
+    location.href=`${location.pathname}?table=${id}`;
+  });
+});
+if(tableId==='F'){
+  const picker=$('#tablePicker');if(picker)picker.style.display='none';
+  const guide=$('#tableGuide');if(guide)guide.textContent='A테이블 우승자 VS B테이블 우승자 · 1대1 결승';
+  if(enterTable)enterTable.textContent='결승 테이블 입장';
+}
 if(introScreen && $('#bg')){
   const syncIntroBg=()=>{
     const src=$('#bg').getAttribute('src');
@@ -2006,7 +2034,10 @@ if(introScreen && $('#bg')){
   };
   if($('#bg').complete) syncIntroBg(); else $('#bg').addEventListener('load',syncIntroBg,{once:true});
 }
-enterTable?.addEventListener('click',()=>{unlockSound();introScreen?.classList.add('hide')});
+enterTable?.addEventListener('click',()=>{
+  unlockSound();introScreen?.classList.add('hide');
+  if(tableId==='F')socket.emit('finalEnter',{token});
+});
 socket.on('connect',()=>socket.emit('hello',{token}));
 
 let adminLoggedIn=false;
@@ -2069,6 +2100,7 @@ $('#exitResetBtn')?.addEventListener('click',()=>{
 });
 socket.on('tournamentReset',()=>{
   try{localStorage.removeItem('blackjackSeat')}catch(e){}
+  try{sessionStorage.removeItem('basan_final_move')}catch(e){}
   mySeat=null;
   selected=null;
   pending=null;

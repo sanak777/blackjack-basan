@@ -1,6 +1,7 @@
 const express=require('express');
 const http=require('http');
 const {Server}=require('socket.io');
+const {AsyncLocalStorage}=require('async_hooks');
 
 const app=express();
 const server=http.createServer(app);
@@ -15,19 +16,29 @@ const BET_SECONDS=15;
 const INSURANCE_SECONDS=10;
 
 app.use(express.static(__dirname));
-app.get('/health',(req,res)=>res.json({ok:true,version:'V40_SPLIT_ACES_RULE'}));
+app.get('/health',(req,res)=>res.json({ok:true,version:'V41_AB_FINAL'}));
 
-const G={
+function makeGame(tableId){return {
+ tableId,
  players:Array(10).fill(null),
  eliminatedSeats:Array(10).fill(null),
  gameStarted:false,dealing:false,settling:false,
  tournamentStarted:false,tournamentOver:false,winnerName:'',
  roundNo:1,dealerHand:[],deck:[],turnOrder:[],turnIndex:0,activeHandIndex:0,
- status:'10명 모이면 시작합니다 · 0 / 10',
+ status:`${tableId==='F'?'결승':tableId+'테이블'} · 방장 게임 시작 대기 · 0 / ${tableId==='F'?2:10}`,
  countdown:null,betTimer:null,turnTimer:null,insuranceTimer:null,hideHole:false,
  insuranceOpen:false,insuranceDeadline:null,
  resultShowUntil:0
-};
+}}
+const games={A:makeGame('A'),B:makeGame('B'),F:makeGame('F')};
+const tableContext=new AsyncLocalStorage();
+const currentTableId=()=>tableContext.getStore()?.tableId||'A';
+const runTable=(tableId,fn)=>tableContext.run({tableId},fn);
+const G=new Proxy({}, {
+ get:(_,key)=>games[currentTableId()][key],
+ set:(_,key,value)=>{games[currentTableId()][key]=value;return true}
+});
+const tournament={mode:'WAITING',qualifiers:{A:null,B:null},finalReady:false};
 
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const moneySafe=n=>'₩'+Math.round(Number(n||0)).toLocaleString('ko-KR');
@@ -188,13 +199,23 @@ function snapshotFor(socket){
    insuranceSeconds:INSURANCE_SECONDS,
    resultShowUntil:G.resultShowUntil||0,
    mySeat,serverNow:Date.now(),betSeconds:BET_SECONDS,
+   tableId:currentTableId(),tableLabel:currentTableId()==='F'?'결승 테이블':`${currentTableId()} 테이블`,
+   tournamentMode:tournament.mode,
+   tableCounts:{A:games.A.players.filter(Boolean).length,B:games.B.players.filter(Boolean).length},
+   qualifiers:{A:tournament.qualifiers.A?.name||'',B:tournament.qualifiers.B?.name||''},
+   finalReady:tournament.finalReady,
+   isQualifier:['A','B'].some(k=>tournament.qualifiers[k]?.token===socket.data.token),
    adminActive:!!activeAdminSocketId,
    isAdmin:activeAdminSocketId===socket.id
  };
 }
 function broadcast(){
- for(const s of io.sockets.sockets.values())s.emit('state',snapshotFor(s));
+ const tableId=currentTableId();
+ for(const s of io.sockets.sockets.values()){
+   if(s.data.tableId===tableId)s.emit('state',snapshotFor(s));
+ }
 }
+function broadcastAll(){for(const id of ['A','B','F'])runTable(id,broadcast)}
 function remainingBetSeconds(){
  const pending=alivePlayers().filter(p=>!p.confirmed&&p.betDeadline);
  if(!pending.length)return 0;
@@ -210,7 +231,7 @@ function updateWaitingStatus(){
  const done=alive.filter(p=>p.confirmed).length;
  const remain=remainingBetSeconds();
  if(!G.tournamentStarted){
-   G.status=`방장 게임 시작 대기 · ${alive.length} / 10`;
+   G.status=`${currentTableId()==='F'?'결승':currentTableId()+'테이블'} · 방장 게임 시작 대기 · ${alive.length} / ${currentTableId()==='F'?2:10}`;
  }else{
    G.status=`생존 ${alive.length}명 · 베팅 완료 ${done} / ${alive.length}${remain?` · ${remain}초`:''}`;
  }
@@ -219,6 +240,7 @@ function finishTournament(entry){
  stopBetTimer();stopTurnTimer();clearCountdown();
  G.gameStarted=false;G.dealing=false;G.settling=false;G.tournamentOver=true;G.tournamentStarted=true;
  G.winnerName=entry?.p?.name||'WINNER';
+ const tableId=currentTableId();
  for(let i=0;i<G.players.length;i++){
    const p=G.players[i];
    if(!p)continue;
@@ -229,10 +251,32 @@ function finishTournament(entry){
      G.players[i].confirmed=true;
      G.players[i].betDeadline=null;
      G.players[i].lastAction='CHAMPION';
-     G.players[i].roundResult='🏆 FINAL WINNER';
+     G.players[i].roundResult=tableId==='F'||tournament.mode==='SINGLE'?'🏆 FINAL WINNER':'🏆 예선 우승 · 결승 진출';
    }
  }
- updateWaitingStatus();broadcast();
+ if(tableId!=='F'&&tournament.mode==='SPLIT'){
+   tournament.qualifiers[tableId]={name:G.winnerName,token:entry.p.token};
+   G.status=`🏆 ${G.winnerName} ${tableId}테이블 우승 · 결승 진출 확정`;
+   if(tournament.qualifiers.A&&tournament.qualifiers.B)prepareFinal();
+ }else{
+   G.status=`🏆 ${G.winnerName} 최종 우승 · TOURNAMENT COMPLETE`;
+ }
+ broadcastAll();
+}
+
+function makeFinalPlayer(q,seat){return {
+ token:q.token,socketId:null,connected:false,disconnectedAt:null,inactiveTurns:0,name:q.name,bank:START,
+ bet:{main:0,pair:0,trio:0},betLast:{main:0,pair:0,trio:0},history:[],
+ confirmed:false,autoConfirmed:false,betDeadline:null,betState:'WAITING_BET',hands:[],roundResult:'',
+ lastAction:'WAIT',eliminatedPending:false,insuranceBet:0,insuranceDecision:null,
+ roundStartBank:null,roundStake:0,roundNet:0,roundResultKind:'',roundResultAmount:0,finalSeat:seat
+}}
+function prepareFinal(){
+ const finalGame=makeGame('F');
+ finalGame.players[0]=makeFinalPlayer(tournament.qualifiers.A,0);
+ finalGame.players[1]=makeFinalPlayer(tournament.qualifiers.B,1);
+ finalGame.status=`결승 준비 · ${tournament.qualifiers.A.name} VS ${tournament.qualifiers.B.name}`;
+ games.F=finalGame;tournament.finalReady=true;
 }
 function checkFinalWinner(){
  const alive=aliveEntries();
@@ -255,7 +299,7 @@ function checkTargetWinner(){
  return true;
 }
 
-function resetTournament(){
+function resetCurrentTable(){
  stopBetTimer();stopTurnTimer();stopInsuranceTimer();clearCountdown();
 
  G.players=Array(10).fill(null);
@@ -272,7 +316,7 @@ function resetTournament(){
  G.turnOrder=[];
  G.turnIndex=0;
  G.activeHandIndex=0;
- G.status='방장 게임 시작 대기 · 0 / 10';
+ G.status=`${currentTableId()==='F'?'결승':currentTableId()+'테이블'} · 방장 게임 시작 대기 · 0 / ${currentTableId()==='F'?2:10}`;
  G.countdown=null;
  G.betTimer=null;
  G.turnTimer=null;
@@ -281,10 +325,14 @@ function resetTournament(){
  G.insuranceOpen=false;
  G.insuranceDeadline=null;
 
- // 연결 자체는 유지하되, 모든 참가자의 좌석/대회 상태를 완전히 초기화
- for(const s of io.sockets.sockets.values())s.data.token='';
  broadcast();
- io.emit('tournamentReset');
+}
+
+function resetTournament(){
+ for(const id of ['A','B','F'])runTable(id,resetCurrentTable);
+ tournament.mode='WAITING';tournament.qualifiers={A:null,B:null};tournament.finalReady=false;
+ for(const s of io.sockets.sockets.values())s.data.token='';
+ broadcastAll();io.emit('tournamentReset');
 }
 
 
@@ -318,6 +366,21 @@ function adminStartGame(){
  broadcast();
  armBettingClock();
  return {ok:true};
+}
+
+function startTournamentByAttendance(){
+ const a=games.A.players.filter(Boolean).length,b=games.B.players.filter(Boolean).length,total=a+b;
+ if(total<1)return {ok:false,msg:'참가자가 1명 이상 착석해야 시작할 수 있습니다.'};
+ if(total<=10){
+   if(b>0)return {ok:false,msg:'10명 이하 단독 경기는 A테이블에서 진행합니다. B테이블 참가자는 A테이블로 이동해주세요.'};
+   tournament.mode='SINGLE';
+   return runTable('A',adminStartGame);
+ }
+ if(a<1||b<1)return {ok:false,msg:'11명 이상은 A·B테이블에 나누어 착석해야 합니다.'};
+ tournament.mode='SPLIT';
+ const ra=runTable('A',adminStartGame),rb=runTable('B',adminStartGame);
+ broadcastAll();
+ return ra.ok&&rb.ok?{ok:true}:{ok:false,msg:ra.msg||rb.msg};
 }
 
 function adminStopGame(){
@@ -694,11 +757,16 @@ function nextRound(){
 }
 
 io.on('connection',socket=>{
- socket.on('takeSeat',({seat,name,token})=>{
+ const requested=String(socket.handshake.query?.table||'A').toUpperCase();
+ const tableId=['A','B','F'].includes(requested)?requested:'A';
+ socket.data.tableId=tableId;
+ const on=(event,handler)=>socket.on(event,(...args)=>runTable(tableId,()=>handler(...args)));
+ on('takeSeat',({seat,name,token})=>{
    if(clearStaleWaitingSeats())updateWaitingStatus();
    seat=Number(seat);name=String(name||'').trim().slice(0,12);token=String(token||'');
    socket.data.token=token;
    if(!token||seat<0||seat>9)return socket.emit('seatError','잘못된 좌석 요청입니다.');
+   if(tableId==='F'&&byToken(token)<0)return socket.emit('seatError','결승 진출자만 결승 테이블에 앉을 수 있습니다.');
    if(!name)return socket.emit('seatError','닉네임을 입력해주세요.');
 
    const existing=byToken(token);
@@ -733,7 +801,7 @@ io.on('connection',socket=>{
    };
    socket.emit('seatOk',{seat});updateWaitingStatus();broadcast();armBettingClock();
  });
- socket.on('leaveSeat',({token})=>{
+ on('leaveSeat',({token})=>{
    socket.data.token=String(token||'');
    const i=byToken(socket.data.token);
    if(i<0)return socket.emit('seatLeft');
@@ -742,7 +810,7 @@ io.on('connection',socket=>{
    if(p.confirmed)return socket.emit('seatError','베팅 완료 후에는 자리를 비울 수 없습니다.');
    G.players[i]=null;socket.emit('seatLeft');updateWaitingStatus();broadcast();armBettingClock();
  });
- socket.on('hello',({token})=>{
+ on('hello',({token})=>{
    socket.data.token=String(token||'');
    const i=byToken(socket.data.token);
    if(i>=0){
@@ -750,7 +818,16 @@ io.on('connection',socket=>{
    }
    broadcast();
  });
- socket.on('betAdd',({token,mode,value})=>{
+ on('finalEnter',({token})=>{
+   if(tableId!=='F'||!tournament.finalReady)return;
+   const i=byToken(String(token||'')),p=G.players[i];
+   if(!p)return socket.emit('actionError','결승 진출자 확인이 필요합니다.');
+   p.finalReady=true;broadcast();
+   if(G.players.slice(0,2).every(x=>x&&x.connected&&x.finalReady)&&!G.tournamentStarted){
+     setTimeout(()=>runTable('F',()=>{if(!G.tournamentStarted)adminStartGame()}),700);
+   }
+ });
+ on('betAdd',({token,mode,value})=>{
    socket.data.token=String(token||'');
    const i=byToken(socket.data.token),p=G.players[i];value=Number(value);
    if(!p)return socket.emit('actionError','내 좌석이 없습니다.');
@@ -764,7 +841,7 @@ io.on('connection',socket=>{
    p.bet[mode]+=value;p.betLast[mode]=value;p.history.push({mode,v:value});
    p.betState='BETTING';broadcast();
  });
- socket.on('betUndo',({token})=>{
+ on('betUndo',({token})=>{
    const i=byToken(String(token||'')),p=G.players[i];
    if(!p||G.gameStarted||G.tournamentOver||p.confirmed)return;
    const h=p.history.pop();
@@ -775,12 +852,12 @@ io.on('connection',socket=>{
    }
    p.betState=(p.bet.main+p.bet.pair+p.bet.trio)>0?'BETTING':'WAITING_BET';broadcast();
  });
- socket.on('betClear',({token})=>{
+ on('betClear',({token})=>{
    const i=byToken(String(token||'')),p=G.players[i];
    if(!p||G.gameStarted||G.tournamentOver||p.confirmed)return;
    p.bet={main:0,pair:0,trio:0};p.betLast={main:0,pair:0,trio:0};p.history=[];p.betState='WAITING_BET';broadcast();
  });
- socket.on('betConfirm',({token})=>{
+ on('betConfirm',({token})=>{
    const i=byToken(String(token||'')),p=G.players[i];
    if(!p||G.gameStarted||G.tournamentOver||p.confirmed)return;
    const total=p.bet.main+p.bet.pair+p.bet.trio;
@@ -791,7 +868,7 @@ io.on('connection',socket=>{
    if(!G.tournamentStarted&&alivePlayers().length===10)armBettingClock();
    maybeStart();
  });
- socket.on('insuranceChoice',({token,take})=>{
+ on('insuranceChoice',({token,take})=>{
    const i=byToken(String(token||'')),p=G.players[i];
    if(!G.insuranceOpen||!p||!p.inRound||p.insuranceDecision!==null)return;
    const amount=Math.floor((p.bet.main||0)/2);
@@ -812,7 +889,7 @@ io.on('connection',socket=>{
    broadcast();
    if(allInsuranceDecided())finishInsuranceChoices();
  });
- socket.on('turnAction',({token,action})=>{
+ on('turnAction',({token,action})=>{
    const i=byToken(String(token||'')),[seat,p,h]=current();
    if(i<0||i!==seat||!p||!h||h.state!=='PLAY'||G.dealing||G.settling||G.insuranceOpen)return;
    // A-A 스플릿 핸드는 카드 1장 지급 후 종료이므로 추가 액션 금지.
@@ -915,13 +992,13 @@ io.on('connection',socket=>{
      if(p.hands[G.activeHandIndex].state!=='PLAY'){G.activeHandIndex++;setTimeout(advanceTurn,220)}
    }
  });
- socket.on('resetTournament',({token})=>{
+ on('resetTournament',({token})=>{
    socket.data.token=String(token||'');
    if(!G.tournamentOver)return socket.emit('actionError','대회 종료 후에만 리셋할 수 있습니다.');
    resetTournament();
  });
 
- socket.on('adminLogin',({password})=>{
+ on('adminLogin',({password})=>{
    if(String(password||'')!==ADMIN_PASSWORD){
      return socket.emit('adminLoginResult',{ok:false,msg:'비밀번호가 틀렸습니다.'});
    }
@@ -934,17 +1011,17 @@ io.on('connection',socket=>{
    broadcast();
  });
 
- socket.on('adminStartGame',()=>{
+ on('adminStartGame',()=>{
    if(!socket.data.isAdmin)return socket.emit('actionError','방장 권한이 필요합니다.');
-   const r=adminStartGame();
+   const r=tableId==='F'?adminStartGame():startTournamentByAttendance();
    if(!r.ok)socket.emit('actionError',r.msg);
  });
 
- socket.on('adminStopGame',()=>{
+ on('adminStopGame',()=>{
    if(!socket.data.isAdmin)return socket.emit('actionError','방장 권한이 필요합니다.');
    adminStopGame();
  });
- socket.on('disconnect',()=>{
+ on('disconnect',()=>{
    if(activeAdminSocketId===socket.id){
      activeAdminSocketId=null;
      socket.data.isAdmin=false;
@@ -984,7 +1061,7 @@ io.on('connection',socket=>{
      },20000);
    }
  });
- setTimeout(()=>socket.emit('state',snapshotFor(socket)),50);
+ setTimeout(()=>runTable(tableId,()=>socket.emit('state',snapshotFor(socket))),50);
 });
 
 server.listen(PORT,'0.0.0.0',()=>console.log(`BLACKJACK BASAN V19 tournament multiplayer on ${PORT}`));
