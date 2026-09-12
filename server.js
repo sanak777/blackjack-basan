@@ -249,7 +249,10 @@ function finishTournament(entry){
    const p=G.players[i];
    if(!p)continue;
    if(i!==entry?.i){
-     reserveEliminatedSeat(i,p,p.eliminatedPending?'BUST 탈락':'탈락');
+     const runnerUpReason=tableId==='F'
+       ?`준우승 · ${G.winnerName} 우승`
+       :(p.eliminatedPending?'BUST 탈락':'탈락');
+     reserveEliminatedSeat(i,p,runnerUpReason);
      G.players[i]=null;
    }else{
      G.players[i].confirmed=true;

@@ -1010,6 +1010,12 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
   color:#eee;font-size:14px;font-weight:800
 }
 #personalResultCountdown{color:#ffd455;font-size:21px;font-weight:1000;margin-right:4px}
+#finalDuelCard{display:none;position:absolute;z-index:118;left:50%;top:43%;transform:translate(-50%,-50%);width:min(360px,78vw);padding:14px 16px;border:2px solid #d7b34b;border-radius:16px;background:linear-gradient(180deg,rgba(17,14,7,.97),rgba(3,3,3,.97));box-shadow:0 10px 34px #000d,0 0 22px rgba(232,190,67,.3);text-align:center;color:#fff}
+#finalDuelCard.show{display:block}
+.finalDuelTitle{color:#ffe184;font-size:20px;font-weight:1000;letter-spacing:.08em}
+#finalDuelNames{margin:9px 0 12px;color:#fff;font-size:15px;font-weight:900}
+#finalDuelEnter{width:100%;padding:10px;border:1px solid #efd16b;border-radius:999px;background:linear-gradient(180deg,#c49a32,#795712);color:#fff;font-weight:1000;cursor:pointer}
+@media(max-width:700px){#finalDuelCard{top:44%;width:68vw;padding:10px 12px}.finalDuelTitle{font-size:16px}#finalDuelNames{font-size:12px;margin:6px 0 9px}#finalDuelEnter{padding:8px;font-size:12px}}
 
 /* V42 · MOBILE TABLE RECOVERY */
 @media(max-width:700px) and (orientation:portrait){
@@ -1208,7 +1214,6 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
   <span class="watchLabel" id="watchLabel">관전</span>
   <button class="watchBtn" data-watch-table="A" type="button">A</button>
   <button class="watchBtn" data-watch-table="B" type="button">B</button>
-  <button class="watchBtn" data-watch-table="F" type="button" hidden>결승</button>
 </nav>
 
 <div id="app">
@@ -1216,6 +1221,11 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
   <div id="roundWinRoller" aria-live="polite">
     <div class="rollerTitle">ROUND WINNERS · 승리금액 순위</div>
     <div class="rollerViewport"><div id="roundWinTrack" class="rollerTrack"></div></div>
+  </div>
+  <div id="finalDuelCard" role="dialog" aria-label="결승 대결">
+    <div class="finalDuelTitle">🏆 결승 대결</div>
+    <div id="finalDuelNames">A 우승자 VS B 우승자</div>
+    <button id="finalDuelEnter" type="button">1대1 결승 입장</button>
   </div>
 
 <div id="adminBox">
@@ -1800,15 +1810,22 @@ socket.on('state',s=>{
  maybePlayDealSound(s);
  announceBlackjackChanges(s,state);
  state=s;
- if(tableId!=='F'&&s.finalReady&&s.isQualifier&&!sessionStorage.getItem('basan_final_move')){
-   sessionStorage.setItem('basan_final_move','1');
-   setTimeout(()=>{location.href=`${location.pathname}?table=F`},1600);
+ const finalCard=$('#finalDuelCard');
+ if(finalCard){
+   const showFinal=tableId!=='F'&&s.finalReady&&s.isQualifier;
+   finalCard.classList.toggle('show',showFinal);
+   const names=$('#finalDuelNames');
+   if(names&&showFinal)names.textContent=`${s.qualifiers?.A||'A 우승자'}  VS  ${s.qualifiers?.B||'B 우승자'}`;
  }
  state.revealDealerIndex=revealDealerIndex;
  mySeat=s.mySeat;
  if(mySeat!==null) selected=mySeat;
  render();
  updateTableWatchNav();
+});
+$('#finalDuelEnter')?.addEventListener('click',()=>{
+  sessionStorage.setItem('basan_final_move','1');
+  location.href=`${location.pathname}?table=F`;
 });
 
 function handValue(cards){
@@ -1968,7 +1985,9 @@ function render(){
  for(let i=0;i<eliminatedSeats.length;i++){
    const e=eliminatedSeats[i]; if(!e)continue;
    const sx=seats[i][0],sy=seats[i][1];
-   html+=`<div class="eliminatedSeat" style="left:${sx}%;top:${sy+5.7}%">${escHTML(e.name||('SEAT '+(i+1)))}<b>탈락 자리 · 재참가 불가</b></div>`;
+   const finalRunner=tableId==='F'&&String(e.reason||'').startsWith('준우승');
+   const seatReason=finalRunner?e.reason:'탈락 자리 · 재참가 불가';
+   html+=`<div class="eliminatedSeat" style="left:${sx}%;top:${sy+5.7}%">${escHTML(e.name||('SEAT '+(i+1)))}<b>${escHTML(seatReason)}</b></div>`;
  }
  for(let i=0;i<players.length;i++){
    const p=players[i]; if(!p)continue;
