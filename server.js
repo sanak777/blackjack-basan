@@ -18,11 +18,12 @@ const WIN_TARGET=10000000;
 const MIN_BET=10000;
 const BET_SECONDS=15;
 const INSURANCE_SECONDS=10;
+const FINAL_SEATS=[3,6]; // 화면상 4번·7번 좌석
 const RUNTIME_STATE_FILE=process.env.RUNTIME_STATE_PATH||path.join('/tmp','blackjack-basan-runtime-state.json');
 let runtimeSaveTimer=null;
 
 app.use(express.static(__dirname));
-app.get('/health',(req,res)=>res.json({ok:true,version:'V45_PREVIOUS_BET'}));
+app.get('/health',(req,res)=>res.json({ok:true,version:'V46_FINAL_SEATS_4_7'}));
 
 function makeGame(tableId){return {
  tableId,
@@ -340,8 +341,8 @@ function makeFinalPlayer(q,seat){return {
 }}
 function prepareFinal(){
  const finalGame=makeGame('F');
- finalGame.players[0]=makeFinalPlayer(tournament.qualifiers.A,0);
- finalGame.players[1]=makeFinalPlayer(tournament.qualifiers.B,1);
+ finalGame.players[FINAL_SEATS[0]]=makeFinalPlayer(tournament.qualifiers.A,FINAL_SEATS[0]);
+ finalGame.players[FINAL_SEATS[1]]=makeFinalPlayer(tournament.qualifiers.B,FINAL_SEATS[1]);
  finalGame.status=`결승 준비 · ${tournament.qualifiers.A.name} VS ${tournament.qualifiers.B.name}`;
  games.F=finalGame;tournament.finalReady=true;
 }
@@ -934,7 +935,7 @@ io.on('connection',socket=>{
    const i=byToken(String(token||'')),p=G.players[i];
    if(!p)return socket.emit('actionError','결승 진출자 확인이 필요합니다.');
    p.finalReady=true;broadcast();
-   if(G.players.slice(0,2).every(x=>x&&x.connected&&x.finalReady)&&!G.tournamentStarted){
+   if(FINAL_SEATS.every(seat=>G.players[seat]&&G.players[seat].connected&&G.players[seat].finalReady)&&!G.tournamentStarted){
      setTimeout(()=>runTable('F',()=>{if(!G.tournamentStarted)adminStartGame()}),700);
    }
  });
@@ -1265,7 +1266,7 @@ process.on('unhandledRejection',err=>{
 process.on('SIGTERM',()=>{saveRuntimeStateNow();process.exit(0)});
 
 server.listen(PORT,'0.0.0.0',()=>{
- console.log(`BLACKJACK BASAN V45 previous-bet on ${PORT}`);
+ console.log(`BLACKJACK BASAN V46 final-seats-4-7 on ${PORT}`);
  if(restoredAtBoot){
    for(const id of ['A','B','F'])runTable(id,()=>{
      if(G.tournamentStarted&&!G.tournamentOver&&!G.gameStarted&&alivePlayers().length>1)armBettingClock();
