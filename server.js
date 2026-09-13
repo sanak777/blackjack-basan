@@ -23,7 +23,7 @@ const RUNTIME_STATE_FILE=process.env.RUNTIME_STATE_PATH||path.join('/tmp','black
 let runtimeSaveTimer=null;
 
 app.use(express.static(__dirname));
-app.get('/health',(req,res)=>res.json({ok:true,version:'V46_FINAL_SEATS_4_7'}));
+app.get('/health',(req,res)=>res.json({ok:true,version:'V47_ADMIN_LOGOUT_ON_STOP'}));
 
 function makeGame(tableId){return {
  tableId,
@@ -470,8 +470,14 @@ function startTournamentByAttendance(){
 
 function adminStopGame(){
  resetTournament();
- G.status='방장이 게임판을 종료했습니다 · 새 참가자 착석 대기';
- broadcast();
+ for(const id of ['A','B','F'])games[id].status='게임판 종료 · 관리자 로그아웃 · 새 참가자 착석 대기';
+ activeAdminSessionToken='';
+ for(const id of adminSocketIds){
+   const adminSocket=io.sockets.sockets.get(id);
+   if(adminSocket)adminSocket.data.isAdmin=false;
+ }
+ adminSocketIds.clear();
+ broadcastAll();
  io.emit('adminGameStopped');
  return {ok:true};
 }
@@ -1266,7 +1272,7 @@ process.on('unhandledRejection',err=>{
 process.on('SIGTERM',()=>{saveRuntimeStateNow();process.exit(0)});
 
 server.listen(PORT,'0.0.0.0',()=>{
- console.log(`BLACKJACK BASAN V46 final-seats-4-7 on ${PORT}`);
+ console.log(`BLACKJACK BASAN V47 admin-logout-on-stop on ${PORT}`);
  if(restoredAtBoot){
    for(const id of ['A','B','F'])runTable(id,()=>{
      if(G.tournamentStarted&&!G.tournamentOver&&!G.gameStarted&&alivePlayers().length>1)armBettingClock();

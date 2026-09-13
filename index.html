@@ -1192,7 +1192,7 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
   </div>
 </div>
 
-<div id="soundVersion">V46 · FINAL SEATS 4·7</div>
+<div id="soundVersion">V47 · ADMIN LOGOUT</div>
 
 <div id="introScreen" aria-label="BLACKJACK BASAN 입장 화면">
   <div class="introCard">
@@ -2237,10 +2237,20 @@ $('#adminStopBtn')?.addEventListener('click',()=>{
 });
 
 socket.on('adminGameStopped',()=>{
+  adminLoggedIn=false;
+  adminSessionKey='';
+  try{localStorage.removeItem('basan_admin_session')}catch(e){}
+  $('#adminBox')?.classList.remove('adminDocked');
+  $('#adminPopup')?.classList.remove('show');
+  $('#adminControls')?.classList.remove('show');
+  const loginRow=$('#adminLoginRow');if(loginRow)loginRow.style.display='flex';
+  const adminBtn=$('#adminOpenBtn');
+  if(adminBtn){adminBtn.textContent='ADMIN';adminBtn.classList.remove('adminOn');}
   mySeat=null;
   selected=null;
   pending=null;
-  const m=$('#adminMsg'); if(m)m.textContent='게임판 종료 완료 · 새 참가자 착석 대기';
+  const m=$('#adminMsg'); if(m)m.textContent='게임판 종료 완료 · 관리자 로그아웃';
+  updateTableWatchNav();
 });
 
 
