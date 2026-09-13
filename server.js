@@ -22,7 +22,7 @@ const RUNTIME_STATE_FILE=process.env.RUNTIME_STATE_PATH||path.join('/tmp','black
 let runtimeSaveTimer=null;
 
 app.use(express.static(__dirname));
-app.get('/health',(req,res)=>res.json({ok:true,version:'V44_RESTART_RECOVERY'}));
+app.get('/health',(req,res)=>res.json({ok:true,version:'V45_PREVIOUS_BET'}));
 
 function makeGame(tableId){return {
  tableId,
@@ -333,7 +333,7 @@ function finishTournament(entry){
 
 function makeFinalPlayer(q,seat){return {
  token:q.token,socketId:null,connected:false,disconnectedAt:null,inactiveTurns:0,name:q.name,bank:START,
- bet:{main:0,pair:0,trio:0},betLast:{main:0,pair:0,trio:0},history:[],
+ bet:{main:0,pair:0,trio:0},betLast:{main:0,pair:0,trio:0},previousBet:{main:0,pair:0,trio:0},history:[],
  confirmed:false,autoConfirmed:false,betDeadline:null,betState:'WAITING_BET',hands:[],roundResult:'',
  lastAction:'WAIT',eliminatedPending:false,insuranceBet:0,insuranceDecision:null,
  roundStartBank:null,roundStake:0,roundNet:0,roundResultKind:'',roundResultAmount:0,finalSeat:seat
@@ -717,6 +717,8 @@ function settle(){
  const dv=handValue(G.dealerHand),db=dv>21,dbj=G.dealerHand.length===2&&dv===21;
  for(const p of G.players){
    if(!p||!p.inRound)continue;
+   // 다음 라운드의 '이전 베팅' 버튼에서 MAIN·사이드 금액을 그대로 불러온다.
+   p.previousBet={main:Number(p.bet.main||0),pair:Number(p.bet.pair||0),trio:Number(p.bet.trio||0)};
    const texts=[];
    p.sideResult={pair:null,trio:null};
    if((p.insuranceBet||0)>0){
@@ -903,7 +905,7 @@ io.on('connection',socket=>{
 
    G.players[seat]={
      token,socketId:socket.id,connected:true,disconnectedAt:null,inactiveTurns:0,name,bank:START,
-     bet:{main:0,pair:0,trio:0},betLast:{main:0,pair:0,trio:0},history:[],
+     bet:{main:0,pair:0,trio:0},betLast:{main:0,pair:0,trio:0},previousBet:{main:0,pair:0,trio:0},history:[],
      confirmed:false,autoConfirmed:false,betDeadline:null,betState:'WAITING_BET',
      hands:[],roundResult:'',lastAction:'WAIT',eliminatedPending:false,insuranceBet:0,insuranceDecision:null,
      roundStartBank:null,roundStake:0,roundNet:0,roundResultKind:'',roundResultAmount:0
@@ -960,6 +962,22 @@ io.on('connection',socket=>{
      p.betLast[h.mode]=prev?prev.v:0;
    }
    p.betState=(p.bet.main+p.bet.pair+p.bet.trio)>0?'BETTING':'WAITING_BET';broadcast();
+ });
+ on('betRepeat',({token})=>{
+   const i=byToken(String(token||'')),p=G.players[i];
+   if(!p||G.gameStarted||G.tournamentOver||p.confirmed)return;
+   const prev=p.previousBet||{main:0,pair:0,trio:0};
+   const next={main:Number(prev.main||0),pair:Number(prev.pair||0),trio:Number(prev.trio||0)};
+   const total=next.main+next.pair+next.trio;
+   if(total<=0)return socket.emit('actionError','저장된 이전 베팅이 없습니다.');
+   if(total>p.bank)return socket.emit('actionError',`이전 베팅 ${moneySafe(total)}을 적용하기에 보유금이 부족합니다.`);
+   p.bet=next;
+   p.betLast={main:next.main||0,pair:next.pair||0,trio:next.trio||0};
+   p.history=[];
+   for(const mode of ['main','pair','trio'])if(next[mode]>0)p.history.push({mode,v:next[mode]});
+   p.betState='BETTING';
+   G.status=`${p.name} · 이전 베팅 불러오기 ${moneySafe(total)}`;
+   broadcast();
  });
  on('betClear',({token})=>{
    const i=byToken(String(token||'')),p=G.players[i];
@@ -1247,7 +1265,7 @@ process.on('unhandledRejection',err=>{
 process.on('SIGTERM',()=>{saveRuntimeStateNow();process.exit(0)});
 
 server.listen(PORT,'0.0.0.0',()=>{
- console.log(`BLACKJACK BASAN V44 restart-recovery on ${PORT}`);
+ console.log(`BLACKJACK BASAN V45 previous-bet on ${PORT}`);
  if(restoredAtBoot){
    for(const id of ['A','B','F'])runTable(id,()=>{
      if(G.tournamentStarted&&!G.tournamentOver&&!G.gameStarted&&alivePlayers().length>1)armBettingClock();

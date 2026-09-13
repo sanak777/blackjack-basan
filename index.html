@@ -1192,7 +1192,7 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
   </div>
 </div>
 
-<div id="soundVersion">V44 · RESTART RECOVERY</div>
+<div id="soundVersion">V45 · PREVIOUS BET</div>
 
 <div id="introScreen" aria-label="BLACKJACK BASAN 입장 화면">
   <div class="introCard">
@@ -1286,7 +1286,7 @@ body{min-height:100vh;display:flex;justify-content:center;align-items:flex-start
 
   <div id="betActions">
     <button class="actionBtn cancel" id="clearBet">✕ 베팅 취소</button>
-    <button class="actionBtn undo" id="undoBet">↶ 되돌리기</button>
+    <button class="actionBtn undo" id="undoBet">↻ 이전 베팅</button>
     <button class="actionBtn done" id="confirmBet">✓ 베팅 완료</button>
   </div>
   <div id="turnInfo"></div>
@@ -1921,7 +1921,7 @@ document.querySelectorAll('.chipBtn').forEach(btn=>{
    render();
  };
 });
-$('#undoBet').onclick=()=>socket.emit('betUndo',{token});
+$('#undoBet').onclick=()=>socket.emit('betRepeat',{token});
 $('#clearBet').onclick=()=>socket.emit('betClear',{token});
 $('#confirmBet').onclick=()=>socket.emit('betConfirm',{token});
 $('#hitBtn').onclick=()=>socket.emit('turnAction',{token,action:'hit'});
